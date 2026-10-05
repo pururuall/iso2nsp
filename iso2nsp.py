@@ -370,6 +370,7 @@ class PartInstance:
         self.guid = str(uuid.uuid4())
         self.master_guid = None
         self.part_name = "Part"
+        self.insert_angle_rad = 0.0
 
     def add_hole(self, hole_contour: Contour):
         hole_contour.is_hole = True
@@ -377,6 +378,45 @@ class PartInstance:
 
     def bbox(self):
         return self.outer_contour.bbox()
+
+
+def rotate_points_canonical(pts, ang_deg):
+    """Поворот точек вокруг (0,0) и сдвиг в локальный ноль (0,0)"""
+    rad = math.radians(ang_deg)
+    cos_a, sin_a = math.cos(rad), math.sin(rad)
+    rot = [(x * cos_a - y * sin_a, x * sin_a + y * cos_a) for x, y in pts]
+    min_x = min(p[0] for p in rot)
+    min_y = min(p[1] for p in rot)
+    return [(p[0] - min_x, p[1] - min_y) for p in rot]
+
+
+def parts_match_rotation(part_a: PartInstance, part_b: PartInstance, tol=1.2):
+    """
+    Проверяет, является ли деталь part_b повернутой копией part_a (на 0, 90, 180 или 270 градусов).
+    Возвращает угол поворота в градусах (0, 90, 180, 270) или None, если геометрии не совпадают.
+    """
+    if len(part_a.holes) != len(part_b.holes):
+        return None
+    area_a = abs(part_a.outer_contour.signed_area())
+    area_b = abs(part_b.outer_contour.signed_area())
+    if abs(area_a - area_b) / max(1.0, area_a) > 0.03:
+        return None
+
+    pts_a = rotate_points_canonical(part_a.outer_contour.get_discrete_points(), 0)
+    raw_pts_b = part_b.outer_contour.get_discrete_points()
+
+    for ang in (0, 90, 180, 270):
+        pts_b_rot = rotate_points_canonical(raw_pts_b, ang)
+        if len(pts_a) != len(pts_b_rot):
+            continue
+        all_close = True
+        for pa in pts_a:
+            if not any(math.hypot(pa[0] - pb[0], pa[1] - pb[1]) < tol for pb in pts_b_rot):
+                all_close = False
+                break
+        if all_close:
+            return ang
+    return None
 
 
 def build_part_hierarchy(closed_contours):
@@ -496,24 +536,31 @@ class NspGenerator:
 
     def _deduplicate_master_parts(self):
         """
-        Группировка одинаковых деталей на листе.
+        Группировка одинаковых деталей на листе, включая повернутые копии (0, 90, 180, 270 град).
         Каждая уникальная геометрия переносится в локальные координаты (0,0)
         и становится мастер-шаблоном CutPieceNode.
         """
-        master_map = {}
-        for idx, part in enumerate(self.parts):
-            bx = part.bbox()
-            w = round(bx[2] - bx[0], 2)
-            h = round(bx[3] - bx[1], 2)
-            num_holes = len(part.holes)
-            
-            # Геометрический ключ для группировки
-            geom_key = (w, h, num_holes)
+        master_list = []
 
-            if geom_key not in master_map:
+        for idx, part in enumerate(self.parts):
+            found_master = None
+            found_angle = 0
+
+            for m in master_list:
+                ang = parts_match_rotation(m['prototype'], part)
+                if ang is not None:
+                    found_master = m
+                    found_angle = ang
+                    break
+
+            if found_master is None:
                 master_guid = str(uuid.uuid4())
-                master_name = part.part_name if (part.part_name and part.part_name != "Part") else f"{self.plate_name}_P{len(master_map) + 1}"
-                master_map[geom_key] = {
+                bx = part.bbox()
+                w = round(bx[2] - bx[0], 2)
+                h = round(bx[3] - bx[1], 2)
+                master_name = part.part_name if (part.part_name and part.part_name != "Part") else f"{self.plate_name}_P{len(master_list) + 1}"
+
+                new_master = {
                     'guid': master_guid,
                     'name': master_name,
                     'width': w,
@@ -521,15 +568,17 @@ class NspGenerator:
                     'count': 1,
                     'prototype': part
                 }
+                master_list.append(new_master)
                 part.master_guid = master_guid
                 part.part_name = master_name
+                part.insert_angle_rad = 0.0
             else:
-                master_info = master_map[geom_key]
-                master_info['count'] += 1
-                part.master_guid = master_info['guid']
-                part.part_name = master_info['name']
+                found_master['count'] += 1
+                part.master_guid = found_master['guid']
+                part.part_name = found_master['name']
+                part.insert_angle_rad = math.radians(found_angle)
 
-        return list(master_map.values())
+        return master_list
 
     def _build_cut_piece_node(self, parent_elem, master_info):
         """Создание узла библиотеки эталонов в локальных координатах (0, 0)"""
@@ -607,7 +656,7 @@ class NspGenerator:
             bx = part.bbox()
             ET.SubElement(prof_info, 'PlateLocationInfo', {
                 'Guid': part.master_guid,
-                'PartInsertAngles': '0',
+                'PartInsertAngles': f"{part.insert_angle_rad:.7f}",
                 'PartInsertX': f"{bx[0]:.3f}",
                 'PartInsertY': f"{bx[1]:.3f}"
             })

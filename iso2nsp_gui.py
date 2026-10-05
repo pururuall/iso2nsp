@@ -17,7 +17,8 @@ from tkinter import ttk, filedialog, messagebox
 # Импорт ядра конвертера
 from iso2nsp import (
     IsoParser, Point, Segment, Contour, PartInstance,
-    build_part_hierarchy, transform_contour, NspGenerator
+    build_part_hierarchy, transform_contour, NspGenerator,
+    parts_match_rotation
 )
 
 
@@ -289,9 +290,9 @@ class Iso2NspApp(tk.Tk):
     # ==========================================================================
 
     def on_open_file(self):
-        filetypes = [("Файлы ISO G-code", "*.iso;*.nc;*.cnc;*.txt"), ("Все файлы", "*.*")]
+        filetypes = [("Файлы программ ЧПУ (*.iso;*.cnc;*.nc;*.tap;*.txt)", "*.iso;*.cnc;*.nc;*.tap;*.txt"), ("Все файлы", "*.*")]
         init_dir = r"d:\Пупупу\тест" if os.path.exists(r"d:\Пупупу\тест") else os.getcwd()
-        path = filedialog.askopenfilename(title="Выберите файл управляющей программы ISO", filetypes=filetypes, initialdir=init_dir)
+        path = filedialog.askopenfilename(title="Выберите файл управляющей программы ЧПУ", filetypes=filetypes, initialdir=init_dir)
         if path:
             self.load_iso_file(path)
 
@@ -426,7 +427,7 @@ class Iso2NspApp(tk.Tk):
             self.render()
 
     def _update_transformed_geometry(self):
-        """Пересчет контуров с учетом трансформаций и группировка мастер-деталей"""
+        """Пересчет контуров с учетом трансформаций и группировка мастер-деталей (включая поворот)"""
         transformed_closed = []
         for c in self.raw_closed_contours:
             tc = transform_contour(
@@ -450,33 +451,44 @@ class Iso2NspApp(tk.Tk):
         self.current_parts = build_part_hierarchy(transformed_closed)
         self.current_open_cuts = transformed_open
 
-        # Группировка уникальных деталей
-        groups_map = {}
+        # Группировка уникальных деталей с распознаванием поворота (0, 90, 180, 270)
+        master_list = []
         for part in self.current_parts:
-            bx = part.bbox()
-            w = round(bx[2] - bx[0], 2)
-            h = round(bx[3] - bx[1], 2)
-            num_holes = len(part.holes)
-            geom_key = (w, h, num_holes)
+            found_master = None
+            found_angle = 0
+            for m in master_list:
+                ang = parts_match_rotation(m['prototype'], part)
+                if ang is not None:
+                    found_master = m
+                    found_angle = ang
+                    break
 
-            if geom_key not in groups_map:
-                # Если уже было задано пользовательское имя, сохраняем его
-                def_name = self.custom_names.get(geom_key, f"{self.plate_name}_P{len(groups_map) + 1}")
-                groups_map[geom_key] = {
+            if found_master is None:
+                bx = part.bbox()
+                w = round(bx[2] - bx[0], 2)
+                h = round(bx[3] - bx[1], 2)
+                num_holes = len(part.holes)
+                geom_key = (min(w, h), max(w, h), num_holes)
+                def_name = self.custom_names.get(geom_key, f"{self.plate_name}_P{len(master_list) + 1}")
+
+                master_data = {
                     'key': geom_key,
                     'name': def_name,
                     'width': w,
                     'height': h,
                     'holes': num_holes,
+                    'prototype': part,
                     'instances': [part]
                 }
+                master_list.append(master_data)
+                part.part_name = def_name
+                part.insert_angle_rad = 0.0
             else:
-                groups_map[geom_key]['instances'].append(part)
+                found_master['instances'].append(part)
+                part.part_name = found_master['name']
+                part.insert_angle_rad = math.radians(found_angle)
 
-            part.part_name = groups_map[geom_key]['name']
-
-        # Сортировка типов деталей по убыванию габаритов
-        self.master_groups = sorted(list(groups_map.values()), key=lambda g: g['width'] * g['height'], reverse=True)
+        self.master_groups = sorted(master_list, key=lambda g: g['width'] * g['height'], reverse=True)
 
         self._refresh_parts_table()
 
@@ -673,13 +685,12 @@ class Iso2NspApp(tk.Tk):
         # 2. Отрисовка деталей
         for part in self.current_parts:
             # Определяем, подсвечена ли эта деталь
-            bx = part.bbox()
-            w = round(bx[2] - bx[0], 2)
-            h = round(bx[3] - bx[1], 2)
-            num_holes = len(part.holes)
-            part_key = (w, h, num_holes)
-
-            is_selected = (self.selected_group_key is not None and self.selected_group_key == part_key)
+            is_selected = False
+            if self.selected_group_key is not None:
+                for g in self.master_groups:
+                    if g['key'] == self.selected_group_key and part in g['instances']:
+                        is_selected = True
+                        break
 
             # Цвета: обычная деталь - темно-зеленый / изумрудный, выбранная - ярко-золотой / желтый
             if is_selected:

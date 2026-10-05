@@ -4,6 +4,7 @@ __pycache__/
 *$py.class
 *.spec
 build/
+iso2nsp_v*.exe
 
 # IDE
 .idea/
@@ -22,3 +23,8 @@ generate_visual_comparison.py
 Пример кода nsp.txt
 Markdown 2.md
 agents.md-main/
+*.cnc
+*.iso
+!samples/*.cnc
+!samples/*.iso
+
