@@ -189,6 +189,7 @@ def transform_contour(contour: Contour, swap_xy=False, rot_deg=0, flip_x=False, 
     new_contour = Contour()
     new_contour.is_closed = contour.is_closed
     new_contour.is_hole = contour.is_hole
+    new_contour.source_order = getattr(contour, 'source_order', 0)
 
     for seg in contour.segments:
         new_start = transform_point(seg.start, swap_xy, rot_deg, flip_x, flip_y, dx, dy, sheet_w, sheet_h)
@@ -289,6 +290,7 @@ class IsoParser:
 
             elif 'M51' in clean_line or 'G100' in clean_line:
                 if in_cut and curr_contour and curr_contour.segments:
+                    curr_contour.source_order = len(self.closed_contours) + len(self.open_contours)
                     if curr_contour.check_closed():
                         self.closed_contours.append(curr_contour)
                     else:
@@ -423,13 +425,14 @@ def build_part_hierarchy(closed_contours):
     """
     Классификация замкнутых контуров на внешние периметры и внутренние отверстия.
     Контур является отверстием, если он лежит внутри другого замкнутого контура.
+    Порядок следования деталей и отверстий сохраняется в точности по исходной резке ISO.
     """
     if not closed_contours:
         return []
 
     # Предварительно вычисляем дискретные полигоны, площади и bbox
     contour_data = []
-    for c in closed_contours:
+    for idx, c in enumerate(closed_contours):
         pts = c.get_discrete_points()
         area = abs(c.signed_area())
         bx = c.bbox()
@@ -437,10 +440,12 @@ def build_part_hierarchy(closed_contours):
             'contour': c,
             'pts': pts,
             'area': area,
-            'bbox': bx
+            'bbox': bx,
+            'source_order': getattr(c, 'source_order', idx)
         })
 
-    # Сортируем по убыванию площади: самые большие контуры идут первыми
+    # Сортируем по убыванию площади ТОЛЬКО для топологической проверки вложенности:
+    # большие контуры проверяются первыми
     contour_data.sort(key=lambda d: d['area'], reverse=True)
 
     parts = []
@@ -473,7 +478,17 @@ def build_part_hierarchy(closed_contours):
                     part.add_hole(contour_data[j]['contour'])
                     assigned_as_hole.add(j)
 
+        # Сортируем отверстия внутри детали в порядке их вырезания в ISO
+        part.holes.sort(key=lambda h: getattr(h, 'source_order', 0))
+
+        # Хронологический индекс детали в УП (по первому срезанному элементу - отверстию или контуру)
+        all_orders = [getattr(c_outer, 'source_order', 0)] + [getattr(h, 'source_order', 0) for h in part.holes]
+        part.source_order = min(all_orders)
+
         parts.append(part)
+
+    # Восстанавливаем строгий хронологический порядок резки из ISO файла
+    parts.sort(key=lambda p: getattr(p, 'source_order', 0))
 
     return parts
 
