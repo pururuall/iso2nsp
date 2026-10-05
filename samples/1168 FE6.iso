@@ -1,0 +1,263 @@
+    ;LAMIERA Laser 1500 x 3000 x 6
+o1 ; 1168 FE6.iso
+
+G90
+M80
+;IF (P2>0) GOTO 100
+
+P20=-10    ;X min
+P21=3000    ;X max
+P22=-10    ;Y min
+P23=1500    ;Y max
+P26=0    ;Pipe diameter [mm]
+
+
+P10=6    ;VISOTA PROSHIVKI [mm]
+P11=0.3    ;Tempo sfondamento [s]
+P12=3    ;Altezza taglio [mm]
+P13=0.5    ;Ritardo Ativazione controllo altezza [s]
+P14=153    ;Tensione d'arco [V]
+P15=1195    ;Velocità nominale [mm/min]
+P16=50    ;Salita fine taglio [mm]
+P18=0    ;Salita perforazione
+P19=1.4    ;Compensazione [mm]
+P24=4800    ;Feed Writer
+P25=0    ;% Velocità sul ATACCO
+P30=130    ;Set Point Power [A]
+P32=3    ;Plasma Gas [0=NO 1=O2 3=H35 5=Air 6=N Ar=7 8=F5]
+P33=6    ;Shield Gas [0=NO 1=O2 3=H35 5=Air 6=N Ar=7 8=F5]
+P34=75    ;Plasma Cut Flow [%]
+P35=19    ;Plasma PreFlow [%]
+P36=80    ;Shield Cut Flow [%]
+P37=51    ;Shield PreFlow [%]
+P38=32    ;Gas1 Mix [%]
+P39=18    ;Gas2 Mix [%]
+M98 Q1
+
+P10=3    ;VISOTA PROSHIVKI [mm]
+P11=0    ;Tempo sfondamento [s]
+P12=3    ;Altezza taglio [mm]
+P13=0    ;Ritardo Ativazione controllo altezza [s]
+P14=75    ;Tensione d'arco [V]
+P15=2540    ;Velocità nominale [mm/min]
+P16=50    ;Salita fine taglio [mm]
+P18=0    ;Salita perforazione
+P19=0    ;Compensazione [mm]
+P24=4800    ;Feed Writer
+P25=0    ;% Velocità sul ATACCO
+P30=15    ;Set Point Power [A]
+P32=7    ;Plasma Gas [0=NO 1=O2 3=H35 5=Air 6=N Ar=7 8=F5]
+P33=6    ;Shield Gas [0=NO 1=O2 3=H35 5=Air 6=N Ar=7 8=F5]
+P34=50    ;Plasma Cut Flow [%]
+P35=50    ;Plasma PreFlow [%]
+P36=10    ;Shield Cut Flow [%]
+P37=10    ;Shield PreFlow [%]
+P38=0    ;Gas1 Mix [%]
+P39=0    ;Gas2 Mix [%]
+M98 Q9
+
+P10=2.5    ;VISOTA PROSHIVKI [mm]
+P11=0    ;Tempo sfondamento [s]
+P12=2.5    ;Altezza taglio [mm]
+P13=0    ;Ritardo Ativazione controllo altezza [s]
+P14=130    ;Tensione d'arco [V]
+P15=6350    ;Velocità nominale [mm/min]
+P16=50    ;Salita fine taglio [mm]
+P18=0    ;Salita perforazione
+P19=0    ;Compensazione [mm]
+P24=4800    ;Feed Writer
+P25=0    ;% Velocità sul ATACCO
+P30=18    ;Set Point Power [A]
+P32=6    ;Plasma Gas [0=NO 1=O2 3=H35 5=Air 6=N Ar=7 8=F5]
+P33=6    ;Shield Gas [0=NO 1=O2 3=H35 5=Air 6=N Ar=7 8=F5]
+P34=10    ;Plasma Cut Flow [%]
+P35=10    ;Plasma PreFlow [%]
+P36=10    ;Shield Cut Flow [%]
+P37=10    ;Shield PreFlow [%]
+P38=0    ;Gas1 Mix [%]
+P39=0    ;Gas2 Mix [%]
+M98 Q10
+
+
+M98
+N100 GOTO P1
+
+
+N101
+M62 Q1
+G00 X10 Y10
+M50
+M88
+
+G01 Y136
+G01 X46
+G01 Y126
+G01 X36
+G01 Y20
+G01 X46
+G01 Y10
+G01 X10
+M51
+G100
+
+N102
+M62 Q1
+G00 X10 Y146
+M50
+G01 Y272
+G01 X46
+G01 Y262
+G01 X36
+G01 Y156
+G01 X46
+G01 Y146
+G01 X10
+M51
+G100
+
+N103
+M62 Q1
+G00 X10 Y282
+M50
+G01 Y408
+G01 X46
+G01 Y398
+G01 X36
+G01 Y292
+G01 X46
+G01 Y282
+G01 X10
+M51
+G100
+
+N104
+M62 Q1
+G00 X10 Y418
+M50
+G01 Y544
+G01 X46
+G01 Y534
+G01 X36
+G01 Y428
+G01 X46
+G01 Y418
+G01 X10
+M51
+G100
+
+N105
+M62 Q1
+G00 X10 Y554
+M50
+G01 Y680
+G01 X46
+G01 Y670
+G01 X36
+G01 Y564
+G01 X46
+G01 Y554
+G01 X10
+M51
+G100
+
+N106
+M62 Q1
+G00 X10 Y690
+M50
+G01 Y816
+G01 X46
+G01 Y806
+G01 X36
+G01 Y700
+G01 X46
+G01 Y690
+G01 X10
+M51
+G100
+
+N107
+M62 Q1
+G00 X10 Y826
+M50
+G01 Y952
+G01 X46
+G01 Y942
+G01 X36
+G01 Y836
+G01 X46
+G01 Y826
+G01 X10
+M51
+G100
+
+N108
+M62 Q1
+G00 X10 Y962
+M50
+G01 Y1088
+G01 X46
+G01 Y1078
+G01 X36
+G01 Y972
+G01 X46
+G01 Y962
+G01 X10
+M51
+G100
+
+N109
+M62 Q1
+G00 X10 Y1098
+M50
+G01 Y1224
+G01 X46
+G01 Y1214
+G01 X36
+G01 Y1108
+G01 X46
+G01 Y1098
+G01 X10
+M51
+G100
+
+N110
+M62 Q1
+G00 X10 Y1234.3
+M50
+G01 Y1360.3
+G01 X46
+G01 Y1350.3
+G01 X36
+G01 Y1244.3
+G01 X46
+G01 Y1234.3
+G01 X10
+M51
+G100
+
+N111
+M62 Q1
+G00 X10 Y1370.3
+M50
+G01 Y1496.3
+G01 X46
+G01 Y1486.3
+G01 X36
+G01 Y1380.3
+G01 X46
+G01 Y1370.3
+G01 X10
+M51
+G100
+
+N112
+M62 Q1
+G00 X56 Y-0.02
+M50
+G01 Y1500.02
+M51
+G100
+
+N9999
+
+M02

@@ -1,0 +1,24 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.spec
+build/
+
+# IDE
+.idea/
+.vscode/
+
+# Development & temporary files
+*.log
+*.tmp
+*.png
+temp_*/
+scratch/
+generate_visual_comparison.py
+
+# Local testing and raw dumps
+тест/
+Пример кода nsp.txt
+Markdown 2.md
+agents.md-main/
