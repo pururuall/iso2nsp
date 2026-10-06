@@ -295,7 +295,7 @@ class IsoParser:
                 curr_contour = Contour()
                 # Продолжаем с текущей позиции
 
-            elif 'M51' in clean_line or 'G100' in clean_line:
+            elif 'M51' in clean_line or 'M56' in clean_line or 'G100' in clean_line:
                 if in_cut and curr_contour and curr_contour.segments:
                     curr_contour.source_order = len(self.closed_contours) + len(self.open_contours)
                     if curr_contour.check_closed():
@@ -333,8 +333,11 @@ class IsoParser:
                     # I и J — абсолютные координаты центра
                     cx = float(mi.group(1)) if mi and mi.group(1) != '' else curr_x
                     cy = float(mj.group(1)) if mj and mj.group(1) != '' else curr_y
-                    seg = Segment(start_p, end_p, seg_type='arc', direction=modal_motion, center=Point(cx, cy))
-                    curr_contour.add_segment(seg)
+                    r_start = math.hypot(start_p.x - cx, start_p.y - cy)
+                    r_end = math.hypot(end_p.x - cx, end_p.y - cy)
+                    if r_start > 1e-3 and r_end > 1e-3:
+                        seg = Segment(start_p, end_p, seg_type='arc', direction=modal_motion, center=Point(cx, cy))
+                        curr_contour.add_segment(seg)
                 elif modal_motion == 'G01':
                     if start_p.dist(end_p) > 1e-4:
                         seg = Segment(start_p, end_p, seg_type='line', direction='G01')
