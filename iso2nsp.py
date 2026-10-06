@@ -432,6 +432,20 @@ def parts_match_rotation(part_a: PartInstance, part_b: PartInstance, tol=1.2):
     return None
 
 
+def compute_part_geom_key(part: PartInstance):
+    """
+    Уникальный геометрический ключ детали (инвариантный к поворотам на 90/180/270).
+    Включает габариты, площадь внешнего контура, количество и площади отверстий.
+    """
+    bx = part.bbox()
+    w = round(bx[2] - bx[0], 1)
+    h = round(bx[3] - bx[1], 1)
+    area = round(abs(part.outer_contour.signed_area()), 0)
+    num_holes = len(part.holes)
+    holes_sig = tuple(sorted(round(abs(hole.signed_area()), 0) for hole in part.holes))
+    return (min(w, h), max(w, h), area, num_holes, holes_sig)
+
+
 def build_part_hierarchy(closed_contours):
     """
     Классификация замкнутых контуров на внешние периметры и внутренние отверстия.
@@ -616,8 +630,7 @@ class NestingProject:
                     bx = part.bbox()
                     w = round(bx[2] - bx[0], 2)
                     h = round(bx[3] - bx[1], 2)
-                    num_holes = len(part.holes)
-                    geom_key = (min(w, h), max(w, h), num_holes)
+                    geom_key = compute_part_geom_key(part)
 
                     def_name = self.custom_names.get(
                         geom_key,

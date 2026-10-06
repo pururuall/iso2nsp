@@ -17,7 +17,7 @@ from tkinter import ttk, filedialog, messagebox
 # Импорт ядра конвертера
 from iso2nsp import (
     IsoParser, Point, Segment, Contour, PartInstance,
-    build_part_hierarchy, transform_contour,
+    build_part_hierarchy, transform_contour, compute_part_geom_key,
     PlateData, NestingProject, parts_match_rotation
 )
 
@@ -34,6 +34,7 @@ class Iso2NspApp(tk.Tk):
         self.project = NestingProject()
         self.current_plate_idx = -1
         self.master_groups = []  # Типы деталей для активного листа
+        self.selected_group_idx = -1  # Индекс выбранной группы деталей
         self.selected_group_key = None  # Выбранная деталь для подсветки
 
         # Флаг: применять трансформации ко всем листам проекта
@@ -629,7 +630,7 @@ class Iso2NspApp(tk.Tk):
                 w = round(bx[2] - bx[0], 2)
                 h = round(bx[3] - bx[1], 2)
                 num_holes = len(part.holes)
-                geom_key = (min(w, h), max(w, h), num_holes)
+                geom_key = compute_part_geom_key(part)
 
                 def_name = self.project.custom_names.get(geom_key, f"{p.plate_name}_P{len(master_list) + 1}")
 
@@ -651,6 +652,11 @@ class Iso2NspApp(tk.Tk):
                 part.insert_angle_rad = math.radians(found_angle)
 
         self.master_groups = sorted(master_list, key=lambda g: g['width'] * g['height'], reverse=True)
+        if 0 <= self.selected_group_idx < len(self.master_groups):
+            self.selected_group_key = self.master_groups[self.selected_group_idx]['key']
+        else:
+            self.selected_group_idx = 0 if self.master_groups else -1
+            self.selected_group_key = self.master_groups[0]['key'] if self.master_groups else None
 
     def _refresh_parts_table(self):
         for item in self.tree_parts.get_children():
@@ -666,13 +672,14 @@ class Iso2NspApp(tk.Tk):
             iid = f"group_{idx}"
             self.tree_parts.insert("", tk.END, iid=iid, values=(name, dims, qty, holes))
 
-            if self.selected_group_key == g['key']:
+            if self.selected_group_idx == idx:
                 selected_iid = iid
 
         if selected_iid:
             self.tree_parts.selection_set(selected_iid)
             self.tree_parts.see(selected_iid)
         elif self.master_groups:
+            self.selected_group_idx = 0
             first_iid = "group_0"
             self.tree_parts.selection_set(first_iid)
             self.on_part_selected(None)
@@ -680,6 +687,7 @@ class Iso2NspApp(tk.Tk):
     def on_part_selected(self, event):
         sel = self.tree_parts.selection()
         if not sel:
+            self.selected_group_idx = -1
             self.selected_group_key = None
             self.lbl_selected_info.config(text="Выберите деталь в таблице выше")
             self.ent_rename.delete(0, tk.END)
@@ -689,6 +697,7 @@ class Iso2NspApp(tk.Tk):
         iid = sel[0]
         idx = int(iid.split("_")[1])
         if idx < len(self.master_groups):
+            self.selected_group_idx = idx
             group = self.master_groups[idx]
             self.selected_group_key = group['key']
             info_text = f"Деталь #{idx+1}: {group['width']:.1f} x {group['height']:.1f} мм ({len(group['instances'])} шт.)"
@@ -706,15 +715,13 @@ class Iso2NspApp(tk.Tk):
             messagebox.showwarning("Внимание", "Имя детали не может быть пустым.")
             return
 
-        if self.selected_group_key:
-            self.project.custom_names[self.selected_group_key] = new_name
+        if 0 <= self.selected_group_idx < len(self.master_groups):
+            group = self.master_groups[self.selected_group_idx]
+            group['name'] = new_name
+            self.project.custom_names[group['key']] = new_name
 
-            for g in self.master_groups:
-                if g['key'] == self.selected_group_key:
-                    g['name'] = new_name
-                    for part in g['instances']:
-                        part.part_name = new_name
-                    break
+            for part in group['instances']:
+                part.part_name = new_name
 
             self._refresh_parts_table()
             self.render()
@@ -862,13 +869,12 @@ class Iso2NspApp(tk.Tk):
         )
 
         # 2. Отрисовка деталей
+        selected_instances = set()
+        if 0 <= self.selected_group_idx < len(self.master_groups):
+            selected_instances = set(self.master_groups[self.selected_group_idx]['instances'])
+
         for part in p.parts:
-            is_selected = False
-            if self.selected_group_key is not None:
-                for g in self.master_groups:
-                    if g['key'] == self.selected_group_key and part in g['instances']:
-                        is_selected = True
-                        break
+            is_selected = (part in selected_instances)
 
             if is_selected:
                 fill_color = "#4d3d14"
