@@ -308,6 +308,16 @@ class Iso2NspApp(tk.Tk):
         btn_reset_names = ttk.Button(rename_box, text="Сбросить имена к стандартным", command=self.on_reset_all_names)
         btn_reset_names.pack(fill=tk.X, pady=(6, 0))
 
+        # Едва заметная правовая маркировка об условиях использования (внизу справа)
+        lbl_lic = tk.Label(
+            right_sidebar,
+            text="Использование ПО строго по условиям LICENSE (pururuall)",
+            bg=self.panel_bg,
+            fg="#2c303c",
+            font=("Segoe UI", 7)
+        )
+        lbl_lic.pack(side=tk.BOTTOM, anchor="e", pady=(4, 0))
+
         # ======================================================================
         # 3. ЦЕНТРАЛЬНАЯ ЧАСТЬ - 2D Холст (Canvas)
         # ======================================================================
