@@ -15,7 +15,9 @@ The codebase consists of two primary modules and a standalone executable:
   - Provides a 2D interactive canvas (zoom, pan, grid, hover coordinates).
   - Sheet dimensions and material editor.
   - Transformations panel (swap axes, rotate, flip, margin align, center).
+  - Multi-sheet jobs manager (batch loading, reordering, sheet repeat counts).
   - Interactive parts table with visual highlighting on the canvas and renaming capabilities.
+- **`pdf_report.py`**: Production PDF report generator matching the Lantek CAM report standard (sheet vector drawing, parts numbering, material utilization, sheet weight, parts specification table).
 - **`iso2nsp.exe`**: Precompiled standalone Windows executable bundled with PyInstaller. Requires no Python runtime and no administrative privileges.
 
 ---
@@ -66,12 +68,11 @@ The XML structure requires a two-level hierarchy:
 
 ## 4. Building the Standalone Executable
 
-To compile `iso2nsp.exe`:
+To compile `iso2nsp.exe` with bundled ReportLab:
 ```bash
-pip install pyinstaller
-pyinstaller --onefile --noconsole --name iso2nsp iso2nsp_gui.py
+uvx --with reportlab pyinstaller --onefile --noconsole --name iso2nsp --distpath "." iso2nsp_gui.py
 ```
-This produces a self-contained single-file executable that does not require Python or administrative permissions.
+This produces a self-contained single-file executable that does not require Python, administrative permissions, or any external software.
 
 ---
 

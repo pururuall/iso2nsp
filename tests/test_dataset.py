@@ -94,6 +94,27 @@ def validate_file(file_path: str):
     except Exception as e:
         issues.append(f"Ошибка валидации XML: {e}")
 
+    # 7. Проверка генерации производственного PDF отчета (если установлен reportlab)
+    try:
+        import pdf_report
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+            tmp_pdf = tf.name
+        try:
+            pdf_report.generate_pdf_report(proj, tmp_pdf)
+            if not os.path.exists(tmp_pdf) or os.path.getsize(tmp_pdf) < 1000:
+                issues.append("PDF отчет сформирован некорректно (< 1000 байт)")
+        finally:
+            if os.path.exists(tmp_pdf):
+                try:
+                    os.remove(tmp_pdf)
+                except Exception:
+                    pass
+    except (ImportError, ModuleNotFoundError):
+        pass  # reportlab опционален для базового парсера без PDF
+    except Exception as e:
+        issues.append(f"Ошибка генерации PDF отчета: {e}")
+
     passed = len(issues) == 0
     return passed, issues
 

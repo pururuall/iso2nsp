@@ -115,8 +115,8 @@ class Contour:
                     else:
                         ang = a1 - sweep * t
                     pts.append((cx + r * math.cos(ang), cy + r * math.sin(ang)))
-        if pts:
-            pts.append(pts[0])
+        if self.segments:
+            pts.append((self.segments[-1].end.x, self.segments[-1].end.y))
         return pts
 
     def bbox(self):
@@ -881,7 +881,7 @@ def convert_iso_to_nsp(input_paths, output_path: str,
                        orientation='auto', swap_axes=None, rotate_deg=0,
                        flip_x=False, flip_y=False,
                        sheet_size=None, thickness=None, material=None,
-                       repeats=None):
+                       repeats=None, pdf_output=None):
     """
     Пайплайн конвертации одного или нескольких ISO/CNC файлов в проект CypNest .nsp
     """
@@ -947,12 +947,26 @@ def convert_iso_to_nsp(input_paths, output_path: str,
 
     xml_text = project.generate_xml_string()
 
+    out_dir = os.path.dirname(output_path)
+    if out_dir:
+        os.makedirs(out_dir, exist_ok=True)
+
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(xml_text)
 
     total_parts = sum(len(p.parts) for p in project.plates)
     print(f"[OK] Конвертация завершена: {output_path}")
     print(f"     Проект '{project.job_name}': Листов: {len(project.plates)}, Всего деталей: {total_parts}")
+
+    if pdf_output:
+        try:
+            from pdf_report import generate_pdf_report
+            generate_pdf_report(project, pdf_output)
+            print(f"[OK] Сформирован производственный PDF-отчет: {pdf_output}")
+        except ImportError:
+            print("[WARN] Для генерации PDF-отчетов требуется библиотека reportlab: pip install reportlab")
+        except Exception as e:
+            print(f"[ERROR] Не удалось создать PDF-отчет: {e}")
 
 
 # ==============================================================================
@@ -977,6 +991,7 @@ def main():
     arg_parser.add_argument("--sheet-size", help="Размер листа в формате WxH (например: 1500x3000)")
     arg_parser.add_argument("--thickness", type=float, help="Толщина листа в мм")
     arg_parser.add_argument("--material", help="Марка материала (например: FE, SS, AL)")
+    arg_parser.add_argument("--pdf", nargs="?", const="auto", help="Сформировать производственный PDF-отчет (стиль Lantek CAM)")
 
     args = arg_parser.parse_args()
 
@@ -988,6 +1003,10 @@ def main():
         names = [os.path.splitext(os.path.basename(f))[0] for f in args.inputs]
         prefix = re.sub(r'[\s_\-#]+$', '', os.path.commonprefix(names).strip())
         out_file = (prefix if len(prefix) >= 3 else names[0]) + ".nsp"
+
+    pdf_out = None
+    if args.pdf:
+        pdf_out = os.path.splitext(out_file)[0] + ".pdf" if args.pdf == "auto" else args.pdf
 
     convert_iso_to_nsp(
         input_paths=args.inputs,
@@ -1001,7 +1020,8 @@ def main():
         sheet_size=args.sheet_size,
         thickness=args.thickness,
         material=args.material,
-        repeats=args.repeats
+        repeats=args.repeats,
+        pdf_output=pdf_out
     )
 
 

@@ -80,6 +80,9 @@ class Iso2NspApp(tk.Tk):
         self.style.configure("Success.TButton", background="#238636", foreground="#ffffff", font=("Segoe UI", 10, "bold"), padding=7)
         self.style.map("Success.TButton", background=[("active", "#2ea043"), ("pressed", "#1b5e20")])
 
+        self.style.configure("Pdf.TButton", background="#c62828", foreground="#ffffff", font=("Segoe UI", 9, "bold"), padding=6)
+        self.style.map("Pdf.TButton", background=[("active", "#e53935"), ("pressed", "#8e0000")])
+
         self.style.configure("Danger.TButton", background="#b32424", foreground="#ffffff", padding=4)
         self.style.map("Danger.TButton", background=[("active", "#d32f2f"), ("pressed", "#8b1818")])
 
@@ -242,7 +245,10 @@ class Iso2NspApp(tk.Tk):
 
         # Сохранение и масштаб
         btn_save = ttk.Button(left_sidebar, text="💾 Сохранить проект (.NSP)", style="Success.TButton", command=self.on_save_nsp)
-        btn_save.pack(fill=tk.X, pady=(2, 4))
+        btn_save.pack(fill=tk.X, pady=(2, 3))
+
+        btn_pdf = ttk.Button(left_sidebar, text="📄 Сохранить отчет (PDF)", style="Pdf.TButton", command=self.on_save_pdf)
+        btn_pdf.pack(fill=tk.X, pady=(0, 4))
 
         btn_fit = ttk.Button(left_sidebar, text="🔍 Вписать лист в окно", command=self.fit_view)
         btn_fit.pack(fill=tk.X, pady=2)
@@ -777,6 +783,58 @@ class Iso2NspApp(tk.Tk):
             messagebox.showinfo("Успешно", msg)
         except Exception as e:
             messagebox.showerror("Ошибка сохранения", f"Не удалось сформировать .nsp файл:\n{e}")
+
+    def on_save_pdf(self):
+        if not self.project.plates:
+            messagebox.showwarning("Нет данных", "Сначала добавьте файлы управляющих программ ЧПУ в проект.")
+            return
+
+        job_name = self.ent_job_name.get().strip() or self.project.detect_job_name()
+        self.project.job_name = job_name
+
+        single_plate_idx = None
+        if len(self.project.plates) > 1:
+            ans = messagebox.askyesnocancel(
+                "Экспорт отчета в PDF",
+                f"В проекте {len(self.project.plates)} листов.\n\n"
+                f"Сформировать единый PDF-отчет по ВСЕМ листам проекта ({len(self.project.plates)} стр.)?\n\n"
+                f"• Нажмите [Да], чтобы экспортировать ВСЕ листы ({len(self.project.plates)} стр.)\n"
+                f"• Нажмите [Нет], чтобы экспортировать ТОЛЬКО текущий лист ({self.active_plate.plate_name})\n"
+                f"• Нажмите [Отмена] для отмены действия"
+            )
+            if ans is None:
+                return
+            elif ans is False:
+                single_plate_idx = self.current_plate_idx
+
+        default_name = f"{job_name}_Отчет.pdf" if single_plate_idx is None else f"{self.active_plate.plate_name}_Отчет.pdf"
+        out_path = filedialog.asksaveasfilename(
+            title="Сохранить производственный отчет (PDF)",
+            defaultextension=".pdf",
+            initialfile=default_name,
+            filetypes=[("PDF Документы (*.pdf)", "*.pdf"), ("Все файлы (*.*)", "*.*")]
+        )
+        if not out_path:
+            return
+
+        try:
+            from pdf_report import generate_pdf_report
+            generate_pdf_report(self.project, out_path, single_plate_idx=single_plate_idx)
+
+            num_pages = len(self.project.plates) if single_plate_idx is None else 1
+            if messagebox.askyesno(
+                "Отчет сформирован",
+                f"Производственный PDF-отчет успешно создан!\n\n"
+                f"• Файл: {os.path.basename(out_path)}\n"
+                f"• Листов в отчете: {num_pages}\n\n"
+                f"Открыть созданный PDF-отчет прямо сейчас?"
+            ):
+                try:
+                    os.startfile(out_path)
+                except Exception:
+                    pass
+        except Exception as e:
+            messagebox.showerror("Ошибка создания PDF", f"Не удалось сгенерировать PDF-отчет:\n{e}")
 
     # ==========================================================================
     # ИНТЕРАКТИВНЫЙ 2D РЕНДЕР С ПОДСВЕТКОЙ
