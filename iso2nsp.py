@@ -295,7 +295,7 @@ class IsoParser:
                 curr_contour = Contour()
                 # Продолжаем с текущей позиции
 
-            elif 'M51' in clean_line or 'M56' in clean_line or 'G100' in clean_line:
+            elif any(m in clean_line for m in ('M51', 'M56', 'M05', 'G100', 'M02', 'M30')):
                 if in_cut and curr_contour and curr_contour.segments:
                     curr_contour.source_order = len(self.closed_contours) + len(self.open_contours)
                     if curr_contour.check_closed():
@@ -335,7 +335,8 @@ class IsoParser:
                     cy = float(mj.group(1)) if mj and mj.group(1) != '' else curr_y
                     r_start = math.hypot(start_p.x - cx, start_p.y - cy)
                     r_end = math.hypot(end_p.x - cx, end_p.y - cy)
-                    if r_start > 1e-3 and r_end > 1e-3:
+                    # Строгая математическая валидация дуги: радиусы должны быть положительными и совпадать (допуск 1 мм)
+                    if r_start > 1e-3 and r_end > 1e-3 and abs(r_start - r_end) <= 1.0:
                         seg = Segment(start_p, end_p, seg_type='arc', direction=modal_motion, center=Point(cx, cy))
                         curr_contour.add_segment(seg)
                 elif modal_motion == 'G01':
