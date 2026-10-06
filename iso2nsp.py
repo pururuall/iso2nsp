@@ -538,15 +538,17 @@ class PlateData:
     def apply_transformations(self):
         """Пересчет геометрии с учетом трансформаций листа и сборка топологии деталей"""
         transformed_closed = [
-            transform_contour(c, self.sheet_width, self.sheet_height,
-                              self.swap_xy, self.rot_deg, self.flip_x, self.flip_y,
-                              self.dx, self.dy)
+            transform_contour(c, swap_xy=self.swap_xy, rot_deg=self.rot_deg,
+                              flip_x=self.flip_x, flip_y=self.flip_y,
+                              dx=self.dx, dy=self.dy,
+                              sheet_w=self.sheet_width, sheet_h=self.sheet_height)
             for c in self.raw_closed_contours
         ]
         transformed_open = [
-            transform_contour(c, self.sheet_width, self.sheet_height,
-                              self.swap_xy, self.rot_deg, self.flip_x, self.flip_y,
-                              self.dx, self.dy)
+            transform_contour(c, swap_xy=self.swap_xy, rot_deg=self.rot_deg,
+                              flip_x=self.flip_x, flip_y=self.flip_y,
+                              dx=self.dx, dy=self.dy,
+                              sheet_w=self.sheet_width, sheet_h=self.sheet_height)
             for c in self.raw_open_contours
         ]
         self.parts = build_part_hierarchy(transformed_closed)
