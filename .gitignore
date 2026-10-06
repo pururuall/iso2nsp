@@ -23,6 +23,8 @@ generate_visual_comparison.py
 Пример кода nsp.txt
 Markdown 2.md
 agents.md-main/
+Plaintext*.txt
+Код с nsp*.txt
 *.cnc
 *.iso
 !samples/*.cnc

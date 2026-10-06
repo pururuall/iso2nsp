@@ -229,6 +229,13 @@ class IsoParser:
         self._parse_trajectories(lines)
 
     def _parse_header(self, lines):
+        # 0. Автоопределение материала и толщины из имени файла (например, "1118 FE6", "1849 FE6 01", "5377 SS4")
+        fname = os.path.basename(self.filepath)
+        mat_re = re.search(r'\b(FE|SS|SUS|AL|ST|CR)\s*(\d+(?:\.\d+)?)\b', fname, re.IGNORECASE)
+        if mat_re:
+            self.material = mat_re.group(1).upper()
+            self.thickness = float(mat_re.group(2))
+
         # 1. Поиск строки ;LAMIERA Laser [Width] x [Height] x [Thickness]
         lamiera_re = re.compile(r';\s*(?:LAMIERA|SHEET)\s*(\w+)?\s*(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)(?:\s*x\s*(\d+(?:\.\d+)?))?', re.IGNORECASE)
         # 2. Поиск параметров станка P21 (X max), P23 (Y max)
@@ -494,29 +501,222 @@ def build_part_hierarchy(closed_contours):
 
 
 # ==============================================================================
-# 5. ГЕНЕРАТОР XML ФОРМАТА CYPNEST (.NSP)
+# 5. МОДЕЛЬ ДАННЫХ И ГЕНЕРАТОР XML CYPNEST (.NSP)
 # ==============================================================================
 
-class NspGenerator:
-    def __init__(self, sheet_width: float, sheet_height: float, thickness: float,
-                 material: str, plate_name: str, parts, open_contours):
+class PlateData:
+    """Модель данных одного листа программы раскроя"""
+    def __init__(self, file_path: str, plate_name: str = "",
+                 sheet_width: float = 1500.0, sheet_height: float = 3000.0,
+                 thickness: float = 6.0, material: str = "FE",
+                 repeat_count: int = 1):
+        self.file_path = file_path
+        self.plate_name = plate_name or (os.path.splitext(os.path.basename(file_path))[0] if file_path else "Plate")
         self.sheet_width = sheet_width
         self.sheet_height = sheet_height
         self.thickness = thickness
         self.material = material
-        self.plate_name = plate_name
-        self.parts = parts
-        self.open_contours = open_contours
+        self.repeat_count = max(1, int(repeat_count))
+        self.guid = str(uuid.uuid4())
+
+        # Исходные контуры (в координатах станка)
+        self.raw_closed_contours = []
+        self.raw_open_contours = []
+
+        # Трансформированные детали и открытые резы
+        self.parts = []
+        self.open_contours = []
+
+        # Параметры трансформации
+        self.swap_xy = True
+        self.rot_deg = 0
+        self.flip_x = False
+        self.flip_y = True
+        self.dx = 0.0
+        self.dy = 0.0
+
+    def apply_transformations(self):
+        """Пересчет геометрии с учетом трансформаций листа и сборка топологии деталей"""
+        transformed_closed = [
+            transform_contour(c, self.sheet_width, self.sheet_height,
+                              self.swap_xy, self.rot_deg, self.flip_x, self.flip_y,
+                              self.dx, self.dy)
+            for c in self.raw_closed_contours
+        ]
+        transformed_open = [
+            transform_contour(c, self.sheet_width, self.sheet_height,
+                              self.swap_xy, self.rot_deg, self.flip_x, self.flip_y,
+                              self.dx, self.dy)
+            for c in self.raw_open_contours
+        ]
+        self.parts = build_part_hierarchy(transformed_closed)
+        self.open_contours = transformed_open
+
+
+class NestingProject:
+    """Модель многолистового проекта раскроя (Nesting Job)"""
+    def __init__(self, job_name: str = ""):
+        self.job_name = job_name
+        self.plates = []  # list[PlateData]
+        self.custom_names = {}  # geom_key -> custom_name
+
+    def add_plate(self, plate: PlateData):
+        self.plates.append(plate)
+        if not self.job_name:
+            self.job_name = self.detect_job_name()
+
+    def remove_plate(self, idx: int):
+        if 0 <= idx < len(self.plates):
+            del self.plates[idx]
+            if self.plates:
+                self.job_name = self.detect_job_name()
+
+    def move_plate(self, idx: int, direction: int):
+        target = idx + direction
+        if 0 <= target < len(self.plates) and 0 <= idx < len(self.plates):
+            self.plates[idx], self.plates[target] = self.plates[target], self.plates[idx]
+
+    def detect_job_name(self) -> str:
+        """Автоопределение имени заказа по общему префиксу имен файлов"""
+        if not self.plates:
+            return "NestingJob"
+        names = [p.plate_name for p in self.plates]
+        if len(names) == 1:
+            return names[0]
+        prefix = os.path.commonprefix(names).strip()
+        clean = re.sub(r'[\s_\-#]+$|\s+\d+$', '', prefix).strip()
+        clean = re.sub(r'[\s_\-#]+$', '', clean).strip()
+        return clean if len(clean) >= 3 else names[0]
+
+    def deduplicate_global_master_parts(self):
+        """
+        Глобальная дедупликация деталей по всем листам проекта (с учетом поворотов 90/180/270).
+        Суммарный тираж вычисляется как sum(count_on_plate * plate.repeat_count).
+        """
+        master_list = []
+        for plate in self.plates:
+            for part in plate.parts:
+                found_master = None
+                found_angle = 0
+                for m in master_list:
+                    ang = parts_match_rotation(m['prototype'], part)
+                    if ang is not None:
+                        found_master = m
+                        found_angle = ang
+                        break
+
+                if found_master is None:
+                    master_guid = str(uuid.uuid4())
+                    bx = part.bbox()
+                    w = round(bx[2] - bx[0], 2)
+                    h = round(bx[3] - bx[1], 2)
+                    num_holes = len(part.holes)
+                    geom_key = (min(w, h), max(w, h), num_holes)
+
+                    def_name = self.custom_names.get(
+                        geom_key,
+                        part.part_name if (part.part_name and part.part_name != "Part") else f"{self.job_name}_P{len(master_list) + 1}"
+                    )
+
+                    new_master = {
+                        'guid': master_guid,
+                        'name': def_name,
+                        'key': geom_key,
+                        'width': w,
+                        'height': h,
+                        'thickness': plate.thickness,
+                        'material': plate.material,
+                        'prototype': part,
+                        'instances': [part],
+                        'total_qty': plate.repeat_count
+                    }
+                    master_list.append(new_master)
+                    part.master_guid = master_guid
+                    part.part_name = def_name
+                    part.insert_angle_rad = 0.0
+                else:
+                    found_master['instances'].append(part)
+                    found_master['total_qty'] += plate.repeat_count
+                    part.master_guid = found_master['guid']
+                    part.part_name = found_master['name']
+                    part.insert_angle_rad = math.radians(found_angle)
+
+        return master_list
+
+    def _append_polyline(self, parent_elem, contour: Contour, layer=None, offset_x=0.0, offset_y=0.0):
+        poly = ET.SubElement(parent_elem, 'PolylineNode')
+        common_prop_attr = {'tlayerb': '0'}
+        if layer:
+            common_prop_attr['layer'] = layer
+        ET.SubElement(poly, 'CommonProperty', common_prop_attr)
+        plist = ET.SubElement(poly, 'pListAndBulges')
+        origin_circle = None
+
+        for seg in contour.segments:
+            sx = seg.start.x - offset_x
+            sy = seg.start.y - offset_y
+            ex = seg.end.x - offset_x
+            ey = seg.end.y - offset_y
+
+            if seg.type == 'line':
+                ET.SubElement(plist, 'endNode', {'x': f"{sx:.4f}", 'y': f"{sy:.4f}"})
+            elif seg.type == 'arc' and seg.center:
+                cx = seg.center.x - offset_x
+                cy = seg.center.y - offset_y
+                r = math.hypot(sx - cx, sy - cy)
+
+                if seg.start.dist(seg.end) < 1e-4:
+                    bul_val = "1" if seg.direction == 'G03' else "-1"
+                    ET.SubElement(plist, 'endNode', {'x': f"{sx:.4f}", 'y': f"{sy:.4f}", 'bul': bul_val})
+                    opp_x = 2.0 * cx - sx
+                    opp_y = 2.0 * cy - sy
+                    ET.SubElement(plist, 'endNode', {'x': f"{opp_x:.4f}", 'y': f"{opp_y:.4f}", 'bul': bul_val})
+                    origin_circle = (cx, cy, r)
+                else:
+                    a1 = math.atan2(sy - cy, sx - cx)
+                    a2 = math.atan2(ey - cy, ex - cx)
+                    if seg.direction == 'G03':
+                        sweep = a2 - a1
+                        while sweep <= 0: sweep += 2.0 * math.pi
+                        bulge = math.tan(sweep / 4.0)
+                    else:
+                        sweep = a1 - a2
+                        while sweep <= 0: sweep += 2.0 * math.pi
+                        bulge = -math.tan(sweep / 4.0)
+
+                    ET.SubElement(plist, 'endNode', {
+                        'x': f"{sx:.4f}",
+                        'y': f"{sy:.4f}",
+                        'bul': f"{bulge:.6f}"
+                    })
+
+        last_seg = contour.segments[-1]
+        last_x = last_seg.end.x - offset_x
+        last_y = last_seg.end.y - offset_y
+        ET.SubElement(plist, 'endNode', {'x': f"{last_x:.4f}", 'y': f"{last_y:.4f}"})
+
+        if origin_circle:
+            orig = ET.SubElement(poly, 'originShape')
+            circle = ET.SubElement(orig, 'CircleNode')
+            ET.SubElement(circle, 'CommonProperty')
+            ET.SubElement(circle, 'infos', {
+                'x': f"{origin_circle[0]:.4f}",
+                'y': f"{origin_circle[1]:.4f}",
+                'r': f"{origin_circle[2]:.4f}"
+            })
 
     def generate_xml_string(self) -> str:
+        first_plate_guid = self.plates[0].guid if self.plates else str(uuid.uuid4())
+        project_material = self.plates[0].material if self.plates else "FE"
         root = ET.Element('root', {
             'V2': '1.0.0.48168',
-            'ShowModel': '2',
+            'ShowModel': '3',
+            'ShowItemGuid': first_plate_guid,
             'GAinfo': '2DCut',
-            'NormalMaterial': self.material
+            'NormalMaterial': project_material
         })
 
-        ET.SubElement(root, 'StopPos')
+        ET.SubElement(root, 'StopPos', {'x': '10', 'y': '10'})
         ET.SubElement(root, 'NestParam', {
             'MinComnEdgeLen': '1',
             'NestCombType': '1',
@@ -535,311 +735,205 @@ class NspGenerator:
         ET.SubElement(grp, 'CommonProperty', {'PartClr': '-1', 'partNsetInfo': '-1'})
         ET.SubElement(grp, 'shapes')
 
-        # 1. Группировка одинаковых деталей в эталоны CutPieceNode
-        master_parts = self._deduplicate_master_parts()
-
+        # 1. Библиотека эталонов CutPieceNode
+        master_parts = self.deduplicate_global_master_parts()
         for master in master_parts:
-            self._build_cut_piece_node(root, master)
+            proto = master['prototype']
+            bx = proto.bbox()
+            offset_x, offset_y = bx[0], bx[1]
 
-        # 2. Размещение на листе PlateNode
-        self._build_plate_node(root)
+            cut_piece = ET.SubElement(root, 'CutPieceNode')
+            ET.SubElement(cut_piece, 'CutPieceInfo', {
+                'Guid': master['guid'],
+                'selected': 'true',
+                'partName': master['name'],
+                'partProcessNum': str(master['total_qty']),
+                'totalnum': str(master['total_qty']),
+                'material': master['material'],
+                'nestRotateStep': '90',
+                'nestPartFitType': '2',
+                'partThickness': f"{master['thickness']:.1f}",
+                'partWidth': f"{master['width']:.3f}",
+                'partHeight': f"{master['height']:.3f}"
+            })
+            shapes = ET.SubElement(cut_piece, 'shapes', {'PartClr': '-13645824'})
+            for hole in proto.holes:
+                self._append_polyline(shapes, hole, layer="I", offset_x=offset_x, offset_y=offset_y)
+            self._append_polyline(shapes, proto.outer_contour, layer=None, offset_x=offset_x, offset_y=offset_y)
 
-        # Pretty-print
+        # 2. Список листов PlateNode
+        for plate in self.plates:
+            plate_node = ET.SubElement(root, 'PlateNode')
+            parts_area = sum(abs(p.outer_contour.signed_area()) for p in plate.parts)
+            sheet_area = max(1.0, plate.sheet_width * plate.sheet_height)
+            utilization = min(1.0, parts_area / sheet_area)
+
+            ET.SubElement(plate_node, 'PlateNodeInfo', {
+                'EdgeDistance': '10',
+                'Guid': plate.guid,
+                'Height': f"{plate.sheet_height:.0f}",
+                'Material': plate.material,
+                'PlateName': plate.plate_name,
+                'Thickness': f"{plate.thickness:.1f}",
+                'Width': f"{plate.sheet_width:.0f}",
+                'UtilizationRate': f"{utilization:.4f}",
+                'PlateProcessNum': str(plate.repeat_count),
+                'TotalNum': str(plate.repeat_count),
+                'selected': 'true'
+            })
+
+            shapes = ET.SubElement(plate_node, 'shapes')
+            for part in plate.parts:
+                part_node = ET.SubElement(shapes, 'PartNode')
+                ET.SubElement(part_node, 'CommonProperty', {
+                    'PartClr': '-8413185',
+                    'partGuid': part.master_guid,
+                    'partName': part.part_name,
+                    'partNsetInfo': '-1'
+                })
+                part_shapes = ET.SubElement(part_node, 'shapes')
+                for hole in part.holes:
+                    self._append_polyline(part_shapes, hole, layer="I")
+                self._append_polyline(part_shapes, part.outer_contour, layer=None)
+
+            for open_cut in plate.open_contours:
+                self._append_polyline(shapes, open_cut, layer=None)
+
+            prof_info = ET.SubElement(plate_node, 'PlateProfilesInfo')
+            for part in plate.parts:
+                bx = part.bbox()
+                ET.SubElement(prof_info, 'PlateLocationInfo', {
+                    'Guid': part.master_guid,
+                    'PartInsertAngles': f"{part.insert_angle_rad:.7f}",
+                    'PartInsertX': f"{bx[0]:.3f}",
+                    'PartInsertY': f"{bx[1]:.3f}"
+                })
+
+            board_pnts = ET.SubElement(plate_node, 'PlateBoardPnts')
+            pnt1s = ET.SubElement(board_pnts, 'PlateBoardPnt1s')
+            ET.SubElement(pnt1s, 'PlateBoardPnt')
+            ET.SubElement(pnt1s, 'PlateBoardPnt', {'x': f"{plate.sheet_width:.0f}"})
+            ET.SubElement(pnt1s, 'PlateBoardPnt', {'x': f"{plate.sheet_width:.0f}", 'y': f"{plate.sheet_height:.0f}"})
+            ET.SubElement(pnt1s, 'PlateBoardPnt', {'y': f"{plate.sheet_height:.0f}"})
+            ET.SubElement(pnt1s, 'PlateBoardPnt')
+
         rough_string = ET.tostring(root, encoding='utf-8')
         reparsed = minidom.parseString(rough_string)
         return reparsed.toprettyxml(indent="  ", encoding="utf-8").decode('utf-8')
 
-    def _deduplicate_master_parts(self):
-        """
-        Группировка одинаковых деталей на листе, включая повернутые копии (0, 90, 180, 270 град).
-        Каждая уникальная геометрия переносится в локальные координаты (0,0)
-        и становится мастер-шаблоном CutPieceNode.
-        """
-        master_list = []
 
-        for idx, part in enumerate(self.parts):
-            found_master = None
-            found_angle = 0
+class NspGenerator:
+    """Генератор XML для обратной совместимости с однолистовым API"""
+    def __init__(self, sheet_width: float, sheet_height: float, thickness: float,
+                 material: str, plate_name: str, parts, open_contours):
+        self.sheet_width = sheet_width
+        self.sheet_height = sheet_height
+        self.thickness = thickness
+        self.material = material
+        self.plate_name = plate_name
+        self.parts = parts
+        self.open_contours = open_contours
 
-            for m in master_list:
-                ang = parts_match_rotation(m['prototype'], part)
-                if ang is not None:
-                    found_master = m
-                    found_angle = ang
-                    break
+    def generate_xml_string(self) -> str:
+        plate = PlateData(
+            file_path="",
+            plate_name=self.plate_name,
+            sheet_width=self.sheet_width,
+            sheet_height=self.sheet_height,
+            thickness=self.thickness,
+            material=self.material,
+            repeat_count=1
+        )
+        plate.parts = self.parts
+        plate.open_contours = self.open_contours
 
-            if found_master is None:
-                master_guid = str(uuid.uuid4())
-                bx = part.bbox()
-                w = round(bx[2] - bx[0], 2)
-                h = round(bx[3] - bx[1], 2)
-                master_name = part.part_name if (part.part_name and part.part_name != "Part") else f"{self.plate_name}_P{len(master_list) + 1}"
+        project = NestingProject(job_name=self.plate_name)
+        project.add_plate(plate)
+        return project.generate_xml_string()
 
-                new_master = {
-                    'guid': master_guid,
-                    'name': master_name,
-                    'width': w,
-                    'height': h,
-                    'count': 1,
-                    'prototype': part
-                }
-                master_list.append(new_master)
-                part.master_guid = master_guid
-                part.part_name = master_name
-                part.insert_angle_rad = 0.0
-            else:
-                found_master['count'] += 1
-                part.master_guid = found_master['guid']
-                part.part_name = found_master['name']
-                part.insert_angle_rad = math.radians(found_angle)
-
-        return master_list
-
-    def _build_cut_piece_node(self, parent_elem, master_info):
-        """Создание узла библиотеки эталонов в локальных координатах (0, 0)"""
-        proto = master_info['prototype']
-        bx = proto.bbox()
-        offset_x, offset_y = bx[0], bx[1]
-
-        cut_piece = ET.SubElement(parent_elem, 'CutPieceNode')
-        ET.SubElement(cut_piece, 'CutPieceInfo', {
-            'Guid': master_info['guid'],
-            'material': self.material,
-            'partHeight': f"{master_info['height']:.3f}",
-            'partName': master_info['name'],
-            'partProcessNum': str(master_info['count']),
-            'totalnum': str(master_info['count']),
-            'partThickness': f"{self.thickness:.1f}",
-            'partWidth': f"{master_info['width']:.3f}",
-            'nestRotateStep': '90',
-            'nestPartFitType': '2'
-        })
-
-        shapes = ET.SubElement(cut_piece, 'shapes', {'PartClr': '-13645824'})
-
-        # Сначала отверстия с layer="I" в локальных координатах
-        for hole in proto.holes:
-            self._append_polyline(shapes, hole, layer="I", offset_x=offset_x, offset_y=offset_y)
-
-        # Внешний периметр детали
-        self._append_polyline(shapes, proto.outer_contour, layer=None, offset_x=offset_x, offset_y=offset_y)
-
-    def _build_plate_node(self, parent_elem):
-        """Создание узла листа с экземплярами деталей в абсолютных координатах"""
-        plate = ET.SubElement(parent_elem, 'PlateNode')
-        plate_guid = str(uuid.uuid4())
-
-        # Расчет коэффициента использования
-        parts_area = sum(abs(p.outer_contour.signed_area()) for p in self.parts)
-        sheet_area = max(1.0, self.sheet_width * self.sheet_height)
-        utilization = min(1.0, parts_area / sheet_area)
-
-        ET.SubElement(plate, 'PlateNodeInfo', {
-            'EdgeDistance': '10',
-            'Guid': plate_guid,
-            'Height': f"{self.sheet_height:.0f}",
-            'Material': self.material,
-            'PlateName': self.plate_name,
-            'Thickness': f"{self.thickness:.1f}",
-            'UtilizationRate': f"{utilization:.4f}",
-            'Width': f"{self.sheet_width:.0f}"
-        })
-
-        shapes = ET.SubElement(plate, 'shapes')
-
-        # Экземпляры деталей в абсолютных координатах листа
-        for part in self.parts:
-            part_node = ET.SubElement(shapes, 'PartNode')
-            ET.SubElement(part_node, 'CommonProperty', {
-                'PartClr': '-8413185',
-                'partGuid': part.master_guid,
-                'partName': part.part_name,
-                'partNsetInfo': '-1'
-            })
-            part_shapes = ET.SubElement(part_node, 'shapes')
-            for hole in part.holes:
-                self._append_polyline(part_shapes, hole, layer="I")
-            self._append_polyline(part_shapes, part.outer_contour, layer=None)
-
-        # Разомкнутые технологические резы
-        for open_cut in self.open_contours:
-            self._append_polyline(shapes, open_cut, layer=None)
-
-        # Позиции вставки деталей PlateProfilesInfo
-        prof_info = ET.SubElement(plate, 'PlateProfilesInfo')
-        for part in self.parts:
-            bx = part.bbox()
-            ET.SubElement(prof_info, 'PlateLocationInfo', {
-                'Guid': part.master_guid,
-                'PartInsertAngles': f"{part.insert_angle_rad:.7f}",
-                'PartInsertX': f"{bx[0]:.3f}",
-                'PartInsertY': f"{bx[1]:.3f}"
-            })
-
-        # Граница листа PlateBoardPnts
-        board_pnts = ET.SubElement(plate, 'PlateBoardPnts')
-        pnt1s = ET.SubElement(board_pnts, 'PlateBoardPnt1s')
-        ET.SubElement(pnt1s, 'PlateBoardPnt')
-        ET.SubElement(pnt1s, 'PlateBoardPnt', {'x': f"{self.sheet_width:.0f}"})
-        ET.SubElement(pnt1s, 'PlateBoardPnt', {'x': f"{self.sheet_width:.0f}", 'y': f"{self.sheet_height:.0f}"})
-        ET.SubElement(pnt1s, 'PlateBoardPnt', {'y': f"{self.sheet_height:.0f}"})
-        ET.SubElement(pnt1s, 'PlateBoardPnt')
-
-    def _append_polyline(self, parent_elem, contour: Contour, layer=None, offset_x=0.0, offset_y=0.0):
-        """
-        Сериализация контура в <PolylineNode> с коэффициентами прогиба bul:
-        bul = tan(theta / 4)
-        """
-        poly = ET.SubElement(parent_elem, 'PolylineNode')
-        common_prop_attr = {'tlayerb': '0'}
-        if layer:
-            common_prop_attr['layer'] = layer
-        ET.SubElement(poly, 'CommonProperty', common_prop_attr)
-
-        plist = ET.SubElement(poly, 'pListAndBulges')
-        origin_circle = None
-
-        for seg in contour.segments:
-            sx = seg.start.x - offset_x
-            sy = seg.start.y - offset_y
-            ex = seg.end.x - offset_x
-            ey = seg.end.y - offset_y
-
-            if seg.type == 'line':
-                ET.SubElement(plist, 'endNode', {'x': f"{sx:.4f}", 'y': f"{sy:.4f}"})
-
-            elif seg.type == 'arc' and seg.center:
-                cx = seg.center.x - offset_x
-                cy = seg.center.y - offset_y
-                r = math.hypot(sx - cx, sy - cy)
-
-                # Проверка: полная окружность 360 градусов
-                if seg.start.dist(seg.end) < 1e-4:
-                    bul_val = "1" if seg.direction == 'G03' else "-1"
-                    # Узел 1: начальная точка
-                    ET.SubElement(plist, 'endNode', {'x': f"{sx:.4f}", 'y': f"{sy:.4f}", 'bul': bul_val})
-                    # Узел 2: диаметрально противоположная точка (2*cx - sx, 2*cy - sy)
-                    opp_x = 2.0 * cx - sx
-                    opp_y = 2.0 * cy - sy
-                    ET.SubElement(plist, 'endNode', {'x': f"{opp_x:.4f}", 'y': f"{opp_y:.4f}", 'bul': bul_val})
-                    # originShape CircleNode
-                    origin_circle = (cx, cy, r)
-                else:
-                    # Стандартная дуга
-                    a1 = math.atan2(sy - cy, sx - cx)
-                    a2 = math.atan2(ey - cy, ex - cx)
-                    if seg.direction == 'G03':  # CCW
-                        sweep = a2 - a1
-                        while sweep <= 0: sweep += 2.0 * math.pi
-                        bulge = math.tan(sweep / 4.0)
-                    else:  # G02 CW
-                        sweep = a1 - a2
-                        while sweep <= 0: sweep += 2.0 * math.pi
-                        bulge = -math.tan(sweep / 4.0)
-
-                    ET.SubElement(plist, 'endNode', {
-                        'x': f"{sx:.4f}",
-                        'y': f"{sy:.4f}",
-                        'bul': f"{bulge:.6f}"
-                    })
-
-        # Замыкающий узел полилинии
-        last_seg = contour.segments[-1]
-        last_x = last_seg.end.x - offset_x
-        last_y = last_seg.end.y - offset_y
-        ET.SubElement(plist, 'endNode', {'x': f"{last_x:.4f}", 'y': f"{last_y:.4f}"})
-
-        # Если была полная окружность, сохраняем аналитический originShape
-        if origin_circle:
-            orig = ET.SubElement(poly, 'originShape')
-            circle = ET.SubElement(orig, 'CircleNode')
-            ET.SubElement(circle, 'CommonProperty')
-            ET.SubElement(circle, 'infos', {
-                'x': f"{origin_circle[0]:.4f}",
-                'y': f"{origin_circle[1]:.4f}",
-                'r': f"{origin_circle[2]:.4f}"
-            })
 
 
 # ==============================================================================
 # 6. КОНВЕРТЕР ВЫСОКОГО УРОВНЯ
 # ==============================================================================
 
-def convert_iso_to_nsp(input_path: str, output_path: str,
+def convert_iso_to_nsp(input_paths, output_path: str,
+                       job_name=None,
                        orientation='auto', swap_axes=None, rotate_deg=0,
                        flip_x=False, flip_y=False,
-                       sheet_size=None, thickness=None, material="SUS"):
+                       sheet_size=None, thickness=None, material=None,
+                       repeats=None):
     """
-    Полный пайплайн конвертации ISO -> NSP с учетом ориентации и трансформаций
+    Пайплайн конвертации одного или нескольких ISO/CNC файлов в проект CypNest .nsp
     """
-    parser = IsoParser(input_path)
-    parser.parse()
+    if isinstance(input_paths, str):
+        paths = [input_paths]
+    else:
+        paths = list(input_paths)
 
-    # Переопределение параметров если заданы
-    if sheet_size:
-        sw, sh = map(float, sheet_size.lower().split('x'))
-        parser.sheet_width, parser.sheet_height = sw, sh
-    if thickness:
-        parser.thickness = float(thickness)
-    if material:
-        parser.material = material
+    project = NestingProject(job_name=job_name or "")
 
-    # Определение необходимости смены осей и отражения Y
-    # В CAM Lantek для вертикального листа (W <= H):
-    # X станка идет вдоль длины листа, а ноль станка соответствует верхнему краю листа в Lantek.
-    # Правильное соответствие: X_sheet = Y_iso, Y_sheet = H_sheet - X_iso (swap_xy=True, flip_y=True).
-    auto_swap = False
-    auto_flip_y = False
-    if orientation == 'auto':
-        if parser.sheet_width <= parser.sheet_height:
+    for idx, path in enumerate(paths):
+        parser = IsoParser(path)
+        parser.parse()
+
+        sw, sh = parser.sheet_width, parser.sheet_height
+        if sheet_size:
+            sw, sh = map(float, sheet_size.lower().split('x'))
+        th = float(thickness) if thickness is not None else parser.thickness
+        mat = material if material is not None else parser.material
+        rep = repeats[idx] if (repeats and idx < len(repeats)) else 1
+
+        auto_swap = False
+        auto_flip_y = False
+        if orientation == 'auto':
+            if sw <= sh:
+                auto_swap = True
+                auto_flip_y = True
+        elif orientation == 'vertical':
+            if sw > sh:
+                sw, sh = sh, sw
             auto_swap = True
             auto_flip_y = True
-    elif orientation == 'vertical':
-        if parser.sheet_width > parser.sheet_height:
-            parser.sheet_width, parser.sheet_height = parser.sheet_height, parser.sheet_width
-        auto_swap = True
-        auto_flip_y = True
-    elif orientation == 'horizontal':
-        if parser.sheet_width < parser.sheet_height:
-            parser.sheet_width, parser.sheet_height = parser.sheet_height, parser.sheet_width
+        elif orientation == 'horizontal':
+            if sw < sh:
+                sw, sh = sh, sw
 
-    do_swap = swap_axes if swap_axes is not None else auto_swap
-    do_flip_y = flip_y if flip_y is not None else auto_flip_y
+        do_swap = swap_axes if swap_axes is not None else auto_swap
+        do_flip_y = flip_y if flip_y is not None else auto_flip_y
 
-    # Трансформация контуров
-    transformed_closed = []
-    for c in parser.closed_contours:
-        tc = transform_contour(c, swap_xy=do_swap, rot_deg=rotate_deg, flip_x=flip_x, flip_y=do_flip_y,
-                               sheet_w=parser.sheet_width, sheet_h=parser.sheet_height)
-        transformed_closed.append(tc)
+        plate = PlateData(
+            file_path=path,
+            plate_name=parser.program_name,
+            sheet_width=sw,
+            sheet_height=sh,
+            thickness=th,
+            material=mat,
+            repeat_count=rep
+        )
+        plate.raw_closed_contours = parser.closed_contours
+        plate.raw_open_contours = parser.open_contours
+        plate.swap_xy = do_swap
+        plate.rot_deg = rotate_deg
+        plate.flip_x = flip_x
+        plate.flip_y = do_flip_y
+        plate.apply_transformations()
 
-    transformed_open = []
-    for c in parser.open_contours:
-        tc = transform_contour(c, swap_xy=do_swap, rot_deg=rotate_deg, flip_x=flip_x, flip_y=do_flip_y,
-                               sheet_w=parser.sheet_width, sheet_h=parser.sheet_height)
-        transformed_open.append(tc)
+        project.add_plate(plate)
 
-    # Построение иерархии деталей (внешний периметр + отверстия)
-    parts = build_part_hierarchy(transformed_closed)
+    if job_name:
+        project.job_name = job_name
+    else:
+        project.job_name = project.detect_job_name()
 
-    # Генерация XML
-    gen = NspGenerator(
-        sheet_width=parser.sheet_width,
-        sheet_height=parser.sheet_height,
-        thickness=parser.thickness,
-        material=parser.material,
-        plate_name=parser.program_name,
-        parts=parts,
-        open_contours=transformed_open
-    )
-
-    xml_text = gen.generate_xml_string()
+    xml_text = project.generate_xml_string()
 
     with open(output_path, 'w', encoding='utf-8') as f:
         f.write(xml_text)
 
+    total_parts = sum(len(p.parts) for p in project.plates)
     print(f"[OK] Конвертация завершена: {output_path}")
-    print(f"     Лист: {parser.sheet_width:.0f}x{parser.sheet_height:.0f} мм, Деталей: {len(parts)}, Резов: {len(transformed_open)}")
+    print(f"     Проект '{project.job_name}': Листов: {len(project.plates)}, Всего деталей: {total_parts}")
 
 
 # ==============================================================================
@@ -850,8 +944,10 @@ def main():
     arg_parser = argparse.ArgumentParser(
         description="iso2nsp: Конвертер G-кода ISO ЧПУ в проект раскроя CypNest .nsp"
     )
-    arg_parser.add_argument("input", help="Входной файл .iso")
-    arg_parser.add_argument("-o", "--output", help="Выходной файл .nsp (по умолчанию: {имя}.nsp)")
+    arg_parser.add_argument("inputs", nargs="+", help="Один или несколько входных файлов .iso / .cnc")
+    arg_parser.add_argument("-o", "--output", help="Выходной файл .nsp (по умолчанию: {имя_заказа}.nsp)")
+    arg_parser.add_argument("--job-name", help="Наименование программы / заказа")
+    arg_parser.add_argument("--repeats", nargs="*", type=int, help="Тираж для каждого листа (например, 1 2 1)")
     arg_parser.add_argument("--orientation", choices=['auto', 'vertical', 'horizontal'], default='auto',
                             help="Ориентация листа (по умолчанию: auto)")
     arg_parser.add_argument("--swap-axes", action="store_true", help="Принудительно поменять оси X и Y местами")
@@ -861,15 +957,23 @@ def main():
     arg_parser.add_argument("--flip-y", action="store_true", help="Отразить раскрой по вертикали")
     arg_parser.add_argument("--sheet-size", help="Размер листа в формате WxH (например: 1500x3000)")
     arg_parser.add_argument("--thickness", type=float, help="Толщина листа в мм")
-    arg_parser.add_argument("--material", default="SUS", help="Марка материала (по умолчанию: SUS)")
+    arg_parser.add_argument("--material", help="Марка материала (например: FE, SS, AL)")
 
     args = arg_parser.parse_args()
 
-    out_file = args.output if args.output else os.path.splitext(args.input)[0] + ".nsp"
+    if args.output:
+        out_file = args.output
+    elif len(args.inputs) == 1:
+        out_file = os.path.splitext(args.inputs[0])[0] + ".nsp"
+    else:
+        names = [os.path.splitext(os.path.basename(f))[0] for f in args.inputs]
+        prefix = re.sub(r'[\s_\-#]+$', '', os.path.commonprefix(names).strip())
+        out_file = (prefix if len(prefix) >= 3 else names[0]) + ".nsp"
 
     convert_iso_to_nsp(
-        input_path=args.input,
+        input_paths=args.inputs,
         output_path=out_file,
+        job_name=args.job_name,
         orientation=args.orientation,
         swap_axes=args.swap_axes if args.swap_axes else None,
         rotate_deg=args.rotate,
@@ -877,7 +981,8 @@ def main():
         flip_y=args.flip_y,
         sheet_size=args.sheet_size,
         thickness=args.thickness,
-        material=args.material
+        material=args.material,
+        repeats=args.repeats
     )
 
 

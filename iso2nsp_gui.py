@@ -2,8 +2,8 @@
 # -*- coding: utf-8 -*-
 """
 iso2nsp_gui.py - Графическое приложение (GUI) для конвертации ISO G-кода в CypNest .nsp
-с интерактивным 2D-предпросмотром, изменением размеров листа, трансформациями раскроя
-и интерактивной таблицей переименования деталей с подсветкой на холсте.
+с поддержкой многолистовых проектов раскроя, тиража листов, интерактивным 2D-предпросмотром,
+трансформациями и интерактивной таблицей переименования деталей с подсветкой на холсте.
 
 Работает на стандартной библиотеке Python (tkinter), компилируется в standalone .exe.
 """
@@ -17,8 +17,8 @@ from tkinter import ttk, filedialog, messagebox
 # Импорт ядра конвертера
 from iso2nsp import (
     IsoParser, Point, Segment, Contour, PartInstance,
-    build_part_hierarchy, transform_contour, NspGenerator,
-    parts_match_rotation
+    build_part_hierarchy, transform_contour,
+    PlateData, NestingProject, parts_match_rotation
 )
 
 
@@ -26,38 +26,18 @@ class Iso2NspApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("iso2nsp - Конвертер раскроя ISO G-код -> CypNest .nsp")
-        self.geometry("1380x850")
-        self.minsize(1050, 680)
+        self.title("iso2nsp - Конвертер раскроя ISO G-код -> CypNest .nsp (Многолистовые проекты)")
+        self.geometry("1440x880")
+        self.minsize(1120, 700)
 
-        # Данные текущей программы
-        self.current_iso_path = None
-        self.parser = None
-        self.raw_closed_contours = []
-        self.raw_open_contours = []
-
-        # Текущее состояние листа и трансформаций
-        self.sheet_w = 1500.0
-        self.sheet_h = 3000.0
-        self.thickness = 6.0
-        self.material = "SUS"
-        self.plate_name = "Plate"
-
-        self.swap_xy = True  # По умолчанию меняем оси станка на оси листа
-        self.rot_deg = 0
-        self.flip_x = False
-        self.flip_y = True   # По умолчанию раскладка сверху, как в Lantek
-        self.offset_x = 0.0
-        self.offset_y = 0.0
-
-        # Кэш деталей и мастер-типов
-        self.current_parts = []
-        self.current_open_cuts = []
-        self.master_groups = []  # Список словарей уникальных деталей
+        # Модель многолистового проекта
+        self.project = NestingProject()
+        self.current_plate_idx = -1
+        self.master_groups = []  # Типы деталей для активного листа
         self.selected_group_key = None  # Выбранная деталь для подсветки
 
-        # Словарь пользовательских названий: geom_key -> custom_name
-        self.custom_names = {}
+        # Флаг: применять трансформации ко всем листам проекта
+        self.var_apply_all = tk.BooleanVar(value=True)
 
         # Параметры навигации по холсту (Zoom & Pan)
         self.zoom_scale = 1.0
@@ -68,10 +48,11 @@ class Iso2NspApp(tk.Tk):
         self._setup_style()
         self._create_layout()
 
-        # Автоматическая загрузка первого тестового файла если доступен
-        default_test = r"d:\Пупупу\тест\1118 FE6.iso"
-        if os.path.exists(default_test):
-            self.load_iso_file(default_test)
+    @property
+    def active_plate(self) -> PlateData:
+        if 0 <= self.current_plate_idx < len(self.project.plates):
+            return self.project.plates[self.current_plate_idx]
+        return None
 
     def _setup_style(self):
         self.configure(bg="#16181f")
@@ -89,16 +70,20 @@ class Iso2NspApp(tk.Tk):
         self.style.configure("Header.TLabel", font=("Segoe UI", 11, "bold"), foreground=self.accent_color)
         self.style.configure("Sub.TLabel", font=("Segoe UI", 8), foreground="#8b949e")
 
-        self.style.configure("TButton", background=self.btn_bg, foreground=self.text_color, borderwidth=0, padding=5)
+        self.style.configure("TButton", background=self.btn_bg, foreground=self.text_color, borderwidth=0, padding=4)
         self.style.map("TButton", background=[("active", "#383f50"), ("pressed", "#444c60")])
 
-        self.style.configure("Accent.TButton", background="#007acc", foreground="#ffffff", font=("Segoe UI", 9, "bold"), padding=6)
+        self.style.configure("Accent.TButton", background="#007acc", foreground="#ffffff", font=("Segoe UI", 9, "bold"), padding=5)
         self.style.map("Accent.TButton", background=[("active", "#0098ff"), ("pressed", "#005999")])
 
-        self.style.configure("Success.TButton", background="#238636", foreground="#ffffff", font=("Segoe UI", 10, "bold"), padding=8)
+        self.style.configure("Success.TButton", background="#238636", foreground="#ffffff", font=("Segoe UI", 10, "bold"), padding=7)
         self.style.map("Success.TButton", background=[("active", "#2ea043"), ("pressed", "#1b5e20")])
 
+        self.style.configure("Danger.TButton", background="#b32424", foreground="#ffffff", padding=4)
+        self.style.map("Danger.TButton", background=[("active", "#d32f2f"), ("pressed", "#8b1818")])
+
         self.style.configure("TEntry", fieldbackground="#161922", foreground="#ffffff")
+        self.style.configure("TCheckbutton", background=self.panel_bg, foreground="#00e5ff", font=("Segoe UI", 8, "bold"))
 
         # Настройка Treeview
         self.style.configure(
@@ -106,7 +91,7 @@ class Iso2NspApp(tk.Tk):
             background="#1a1d26",
             foreground="#e6edf3",
             fieldbackground="#1a1d26",
-            rowheight=26,
+            rowheight=24,
             font=("Segoe UI", 9)
         )
         self.style.configure("Treeview.Heading", background="#282c38", foreground="#00e5ff", font=("Segoe UI", 9, "bold"))
@@ -117,63 +102,124 @@ class Iso2NspApp(tk.Tk):
         main_frame = tk.Frame(self, bg=self.bg_color)
         main_frame.pack(fill=tk.BOTH, expand=True)
 
-        # 1. Левая панель инструментов (Sidebar)
-        left_sidebar = tk.Frame(main_frame, bg=self.panel_bg, width=280, padx=12, pady=12)
+        # ======================================================================
+        # 1. ЛЕВАЯ ПАНЕЛЬ ИНСТРУМЕНТОВ (Sidebar)
+        # ======================================================================
+        left_sidebar = tk.Frame(main_frame, bg=self.panel_bg, width=320, padx=10, pady=10)
         left_sidebar.pack(side=tk.LEFT, fill=tk.Y)
         left_sidebar.pack_propagate(False)
 
-        # Заголовок
-        ttk.Label(left_sidebar, text="Раскрой ЧПУ -> CypNest", style="Header.TLabel").pack(anchor="w", pady=(0, 2))
-        ttk.Label(left_sidebar, text="Конвертер траекторий Lantek ISO", style="Sub.TLabel").pack(anchor="w", pady=(0, 10))
+        # Заголовок и имя проекта
+        ttk.Label(left_sidebar, text="Раскрой ЧПУ -> CypNest", style="Header.TLabel").pack(anchor="w")
+        ttk.Label(left_sidebar, text="Многолистовые проекты .NSP", style="Sub.TLabel").pack(anchor="w", pady=(0, 6))
 
-        # Кнопка открытия файла
-        btn_open = ttk.Button(left_sidebar, text="📂 Выбрать .ISO файл", style="Accent.TButton", command=self.on_open_file)
-        btn_open.pack(fill=tk.X, pady=(0, 4))
+        job_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
+        job_frame.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(job_frame, text="Заказ / Программа:").pack(anchor="w")
+        self.ent_job_name = ttk.Entry(job_frame, font=("Segoe UI", 9, "bold"))
+        self.ent_job_name.pack(fill=tk.X, pady=(2, 0))
 
-        self.lbl_file = ttk.Label(left_sidebar, text="Файл не выбран", wraplength=250, foreground="#abb2bf")
-        self.lbl_file.pack(anchor="w", pady=(0, 8))
+        ttk.Separator(left_sidebar, orient="horizontal").pack(fill=tk.X, pady=4)
 
-        ttk.Separator(left_sidebar, orient="horizontal").pack(fill=tk.X, pady=6)
+        # Панель "Листы программы"
+        header_sheets = tk.Frame(left_sidebar, bg=self.panel_bg)
+        header_sheets.pack(fill=tk.X, pady=(0, 2))
+        ttk.Label(header_sheets, text="Листы программы", style="Header.TLabel").pack(side=tk.LEFT)
+        self.lbl_sheets_count = ttk.Label(header_sheets, text="0 шт.", style="Sub.TLabel")
+        self.lbl_sheets_count.pack(side=tk.RIGHT, pady=2)
 
-        # Параметры листа
-        ttk.Label(left_sidebar, text="Параметры листа", style="Header.TLabel").pack(anchor="w", pady=(0, 4))
+        # Таблица листов с прокруткой
+        sheets_box = tk.Frame(left_sidebar, bg=self.panel_bg)
+        sheets_box.pack(fill=tk.BOTH, expand=False, pady=(0, 4))
+
+        cols_s = ("idx", "name", "dims", "qty", "parts")
+        self.tree_sheets = ttk.Treeview(sheets_box, columns=cols_s, show="headings", height=6, selectmode="browse")
+        self.tree_sheets.heading("idx", text="№")
+        self.tree_sheets.heading("name", text="Имя листа")
+        self.tree_sheets.heading("dims", text="ШхВ")
+        self.tree_sheets.heading("qty", text="Тираж")
+        self.tree_sheets.heading("parts", text="Дет.")
+
+        self.tree_sheets.column("idx", width=24, anchor="center")
+        self.tree_sheets.column("name", width=110, anchor="w")
+        self.tree_sheets.column("dims", width=80, anchor="center")
+        self.tree_sheets.column("qty", width=42, anchor="center")
+        self.tree_sheets.column("parts", width=40, anchor="center")
+
+        sb_sheets = ttk.Scrollbar(sheets_box, orient=tk.VERTICAL, command=self.tree_sheets.yview)
+        self.tree_sheets.configure(yscrollcommand=sb_sheets.set)
+
+        self.tree_sheets.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        sb_sheets.pack(side=tk.RIGHT, fill=tk.Y)
+        self.tree_sheets.bind("<<TreeviewSelect>>", self.on_sheet_selected)
+
+        # Кнопки управления листами
+        btn_sheets_row = tk.Frame(left_sidebar, bg=self.panel_bg)
+        btn_sheets_row.pack(fill=tk.X, pady=(0, 4))
+
+        btn_add = ttk.Button(btn_sheets_row, text="+ Добавить файлы...", style="Accent.TButton", command=self.on_open_files)
+        btn_add.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 2))
+
+        ttk.Button(btn_sheets_row, text="▲", width=3, command=lambda: self.on_move_sheet(-1)).pack(side=tk.LEFT, padx=1)
+        ttk.Button(btn_sheets_row, text="▼", width=3, command=lambda: self.on_move_sheet(1)).pack(side=tk.LEFT, padx=1)
+        ttk.Button(btn_sheets_row, text="✕", width=3, style="Danger.TButton", command=self.on_remove_sheet).pack(side=tk.LEFT, padx=1)
+        ttk.Button(btn_sheets_row, text="⟳", width=3, command=self.on_clear_sheets).pack(side=tk.LEFT, padx=1)
+
+        # Редактирование тиража выбранного листа
+        rep_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
+        rep_frame.pack(fill=tk.X, pady=(0, 6))
+        ttk.Label(rep_frame, text="Тираж выбранного листа (шт):").pack(side=tk.LEFT)
+        self.spin_repeat = tk.Spinbox(rep_frame, from_=1, to=9999, width=5, bg="#161922", fg="#ffffff",
+                                      buttonbackground=self.btn_bg, command=self.on_repeat_changed)
+        self.spin_repeat.pack(side=tk.RIGHT)
+        self.spin_repeat.bind("<Return>", lambda e: self.on_repeat_changed())
+        self.spin_repeat.bind("<FocusOut>", lambda e: self.on_repeat_changed())
+
+        ttk.Separator(left_sidebar, orient="horizontal").pack(fill=tk.X, pady=4)
+
+        # Параметры активного листа
+        self.lbl_active_sheet = ttk.Label(left_sidebar, text="Параметры листа", style="Header.TLabel")
+        self.lbl_active_sheet.pack(anchor="w", pady=(0, 2))
 
         dim_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
         dim_frame.pack(fill=tk.X, pady=2)
 
         ttk.Label(dim_frame, text="Ширина (X):").grid(row=0, column=0, sticky="w", pady=2)
         self.ent_w = ttk.Entry(dim_frame, width=7)
-        self.ent_w.insert(0, str(int(self.sheet_w)))
+        self.ent_w.insert(0, "1500")
         self.ent_w.grid(row=0, column=1, sticky="w", padx=4, pady=2)
         ttk.Label(dim_frame, text="мм").grid(row=0, column=2, sticky="w")
 
         ttk.Label(dim_frame, text="Длина (Y):").grid(row=1, column=0, sticky="w", pady=2)
         self.ent_h = ttk.Entry(dim_frame, width=7)
-        self.ent_h.insert(0, str(int(self.sheet_h)))
+        self.ent_h.insert(0, "3000")
         self.ent_h.grid(row=1, column=1, sticky="w", padx=4, pady=2)
         ttk.Label(dim_frame, text="мм").grid(row=1, column=2, sticky="w")
 
         ttk.Label(dim_frame, text="Толщина:").grid(row=2, column=0, sticky="w", pady=2)
         self.ent_t = ttk.Entry(dim_frame, width=7)
-        self.ent_t.insert(0, str(self.thickness))
+        self.ent_t.insert(0, "6.0")
         self.ent_t.grid(row=2, column=1, sticky="w", padx=4, pady=2)
         ttk.Label(dim_frame, text="мм").grid(row=2, column=2, sticky="w")
 
         ttk.Label(dim_frame, text="Материал:").grid(row=3, column=0, sticky="w", pady=2)
         self.ent_mat = ttk.Entry(dim_frame, width=7)
-        self.ent_mat.insert(0, self.material)
+        self.ent_mat.insert(0, "FE")
         self.ent_mat.grid(row=3, column=1, sticky="w", padx=4, pady=2)
 
-        btn_apply_sheet = ttk.Button(left_sidebar, text="Применить размеры", command=self.on_apply_sheet_params)
-        btn_apply_sheet.pack(fill=tk.X, pady=(4, 8))
+        btn_apply_sheet = ttk.Button(left_sidebar, text="Применить параметры листа", command=self.on_apply_sheet_params)
+        btn_apply_sheet.pack(fill=tk.X, pady=(2, 6))
 
-        ttk.Separator(left_sidebar, orient="horizontal").pack(fill=tk.X, pady=6)
+        ttk.Separator(left_sidebar, orient="horizontal").pack(fill=tk.X, pady=4)
 
         # Трансформации
-        ttk.Label(left_sidebar, text="Трансформации", style="Header.TLabel").pack(anchor="w", pady=(0, 4))
+        trans_head = tk.Frame(left_sidebar, bg=self.panel_bg)
+        trans_head.pack(fill=tk.X, pady=(0, 2))
+        ttk.Label(trans_head, text="Трансформации", style="Header.TLabel").pack(side=tk.LEFT)
+        chk_all = ttk.Checkbutton(trans_head, text="Ко всем листам", variable=self.var_apply_all, style="TCheckbutton")
+        chk_all.pack(side=tk.RIGHT)
 
-        self.btn_swap = ttk.Button(left_sidebar, text="⤢ Поменять оси (X ↔ Y)", command=self.on_toggle_swap_axes)
-        self.btn_swap.pack(fill=tk.X, pady=2)
+        ttk.Button(left_sidebar, text="⤢ Поменять оси (X ↔ Y)", command=self.on_toggle_swap_axes).pack(fill=tk.X, pady=2)
 
         rot_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
         rot_frame.pack(fill=tk.X, pady=2)
@@ -191,26 +237,28 @@ class Iso2NspApp(tk.Tk):
         ttk.Button(align_frame, text="⌖ Отступ 10мм", width=12, command=self.on_align_margin).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
         ttk.Button(align_frame, text="⊡ Центрировать", width=12, command=self.on_center_sheet).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
 
-        ttk.Separator(left_sidebar, orient="horizontal").pack(fill=tk.X, pady=8)
+        ttk.Separator(left_sidebar, orient="horizontal").pack(fill=tk.X, pady=6)
 
-        # Кнопки экспорта и навигации
-        btn_save = ttk.Button(left_sidebar, text="💾 Сохранить .NSP", style="Success.TButton", command=self.on_save_nsp)
-        btn_save.pack(fill=tk.X, pady=(2, 6))
+        # Сохранение и масштаб
+        btn_save = ttk.Button(left_sidebar, text="💾 Сохранить проект (.NSP)", style="Success.TButton", command=self.on_save_nsp)
+        btn_save.pack(fill=tk.X, pady=(2, 4))
 
         btn_fit = ttk.Button(left_sidebar, text="🔍 Вписать лист в окно", command=self.fit_view)
         btn_fit.pack(fill=tk.X, pady=2)
 
-        # 2. Правая панель - Список и переименование деталей
-        right_sidebar = tk.Frame(main_frame, bg=self.panel_bg, width=380, padx=12, pady=12)
+        # ======================================================================
+        # 2. ПРАВАЯ ПАНЕЛЬ - Список и переименование деталей активного листа
+        # ======================================================================
+        right_sidebar = tk.Frame(main_frame, bg=self.panel_bg, width=380, padx=10, pady=10)
         right_sidebar.pack(side=tk.RIGHT, fill=tk.Y)
         right_sidebar.pack_propagate(False)
 
-        ttk.Label(right_sidebar, text="Детали на листе", style="Header.TLabel").pack(anchor="w", pady=(0, 2))
-        ttk.Label(right_sidebar, text="Кликните на деталь для подсветки и изменения имени", style="Sub.TLabel").pack(anchor="w", pady=(0, 8))
+        ttk.Label(right_sidebar, text="Детали активного листа", style="Header.TLabel").pack(anchor="w", pady=(0, 2))
+        ttk.Label(right_sidebar, text="Кликните на деталь для подсветки и изменения имени", style="Sub.TLabel").pack(anchor="w", pady=(0, 6))
 
         # Таблица деталей Treeview с прокруткой
         tree_container = tk.Frame(right_sidebar, bg=self.panel_bg)
-        tree_container.pack(fill=tk.BOTH, expand=True, pady=(0, 8))
+        tree_container.pack(fill=tk.BOTH, expand=True, pady=(0, 6))
 
         columns = ("name", "dims", "qty", "holes")
         self.tree_parts = ttk.Treeview(tree_container, columns=columns, show="headings", selectmode="browse")
@@ -250,10 +298,12 @@ class Iso2NspApp(tk.Tk):
         btn_apply_name = ttk.Button(edit_row, text="Применить", style="Accent.TButton", command=self.on_apply_rename)
         btn_apply_name.pack(side=tk.RIGHT)
 
-        btn_reset_names = ttk.Button(rename_box, text="Сбросить все имена к стандартным", command=self.on_reset_all_names)
+        btn_reset_names = ttk.Button(rename_box, text="Сбросить имена к стандартным", command=self.on_reset_all_names)
         btn_reset_names.pack(fill=tk.X, pady=(6, 0))
 
-        # 3. Центральная часть - 2D Холст (Canvas)
+        # ======================================================================
+        # 3. ЦЕНТРАЛЬНАЯ ЧАСТЬ - 2D Холст (Canvas)
+        # ======================================================================
         canvas_container = tk.Frame(main_frame, bg="#101216")
         canvas_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
@@ -286,174 +336,285 @@ class Iso2NspApp(tk.Tk):
         self.bind("<Configure>", lambda e: self.render())
 
     # ==========================================================================
-    # ЗАГРУЗКА И ОБРАБОТКА ДАННЫХ
+    # УПРАВЛЕНИЕ ЛИСТАМИ ПРОЕКТА
     # ==========================================================================
 
-    def on_open_file(self):
+    def on_open_files(self):
         filetypes = [("Файлы программ ЧПУ (*.iso;*.cnc;*.nc;*.tap;*.txt)", "*.iso;*.cnc;*.nc;*.tap;*.txt"), ("Все файлы", "*.*")]
         init_dir = r"d:\Пупупу\тест" if os.path.exists(r"d:\Пупупу\тест") else os.getcwd()
-        path = filedialog.askopenfilename(title="Выберите файл управляющей программы ЧПУ", filetypes=filetypes, initialdir=init_dir)
-        if path:
-            self.load_iso_file(path)
+        paths = filedialog.askopenfilenames(title="Выберите файлы управляющих программ ЧПУ", filetypes=filetypes, initialdir=init_dir)
+        if paths:
+            self.load_iso_files(list(paths))
 
-    def load_iso_file(self, path):
-        try:
-            self.current_iso_path = path
-            self.parser = IsoParser(path)
-            self.parser.parse()
+    def load_iso_files(self, paths):
+        if not paths:
+            return
 
-            self.sheet_w = self.parser.sheet_width
-            self.sheet_h = self.parser.sheet_height
-            self.thickness = self.parser.thickness
-            self.material = self.parser.material
-            self.plate_name = self.parser.program_name
+        added_count = 0
+        first_added_idx = len(self.project.plates)
 
-            # Обновление полей ввода
-            self.ent_w.delete(0, tk.END)
-            self.ent_w.insert(0, str(int(self.sheet_w)))
-            self.ent_h.delete(0, tk.END)
-            self.ent_h.insert(0, str(int(self.sheet_h)))
-            self.ent_t.delete(0, tk.END)
-            self.ent_t.insert(0, str(self.thickness))
-            self.ent_mat.delete(0, tk.END)
-            self.ent_mat.insert(0, self.material)
+        for path in paths:
+            try:
+                parser = IsoParser(path)
+                parser.parse()
 
-            self.lbl_file.config(text=os.path.basename(path), foreground="#00e5ff")
+                plate = PlateData(
+                    file_path=path,
+                    plate_name=parser.program_name,
+                    sheet_width=parser.sheet_width,
+                    sheet_height=parser.sheet_height,
+                    thickness=parser.thickness,
+                    material=parser.material,
+                    repeat_count=1
+                )
+                plate.raw_closed_contours = parser.closed_contours
+                plate.raw_open_contours = parser.open_contours
 
-            self.raw_closed_contours = self.parser.closed_contours
-            self.raw_open_contours = self.parser.open_contours
+                # По умолчанию для вертикального листа CAM Lantek (W <= H): swap_xy=True, flip_y=True
+                if plate.sheet_width <= plate.sheet_height:
+                    plate.swap_xy = True
+                    plate.flip_y = True
+                else:
+                    plate.swap_xy = False
+                    plate.flip_y = False
 
-            # Сброс пользовательских имен при открытии нового файла
-            self.custom_names.clear()
-            self.selected_group_key = None
+                plate.apply_transformations()
+                self.project.add_plate(plate)
+                added_count += 1
+            except Exception as e:
+                messagebox.showerror("Ошибка загрузки", f"Не удалось прочитать {os.path.basename(path)}:\n{e}")
 
-            # По умолчанию для вертикального листа CAM Lantek (W <= H):
-            # включаем смену осей и отражение Y, чтобы раскладка сразу ложилась сверху,
-            # в точном соответствии с отчетом и чертежом раскроя Lantek.
-            if self.sheet_w <= self.sheet_h:
-                self.swap_xy = True
-                self.flip_y = True
-            else:
-                self.swap_xy = False
-                self.flip_y = False
+        if added_count > 0:
+            detected_job = self.project.detect_job_name()
+            self.project.job_name = detected_job
+            self.ent_job_name.delete(0, tk.END)
+            self.ent_job_name.insert(0, detected_job)
 
-            self.rot_deg = 0
-            self.flip_x = False
-            self.offset_x = 0.0
-            self.offset_y = 0.0
+            self._refresh_sheets_table()
+            self._select_sheet(first_added_idx)
 
-            self._update_transformed_geometry()
+    def on_sheet_selected(self, event):
+        sel = self.tree_sheets.selection()
+        if not sel:
+            return
+        iid = sel[0]
+        idx = int(iid.split("_")[1])
+        if 0 <= idx < len(self.project.plates) and idx != self.current_plate_idx:
+            self.current_plate_idx = idx
+            self._update_ui_for_active_sheet()
             self.fit_view()
 
-        except Exception as e:
-            messagebox.showerror("Ошибка парсинга ISO", f"Не удалось прочитать файл:\n{e}")
+    def _select_sheet(self, idx):
+        if 0 <= idx < len(self.project.plates):
+            self.current_plate_idx = idx
+            iid = f"sheet_{idx}"
+            self.tree_sheets.selection_set(iid)
+            self.tree_sheets.see(iid)
+            self._update_ui_for_active_sheet()
+            self.fit_view()
+
+    def _refresh_sheets_table(self, preserve_selection=True):
+        cur_idx = self.current_plate_idx
+        for item in self.tree_sheets.get_children():
+            self.tree_sheets.delete(item)
+
+        for idx, p in enumerate(self.project.plates):
+            iid = f"sheet_{idx}"
+            dims = f"{p.sheet_width:.0f}x{p.sheet_height:.0f}"
+            self.tree_sheets.insert("", tk.END, iid=iid, values=(idx + 1, p.plate_name, dims, p.repeat_count, len(p.parts)))
+
+        self.lbl_sheets_count.config(text=f"{len(self.project.plates)} шт.")
+
+        if preserve_selection and 0 <= cur_idx < len(self.project.plates):
+            iid = f"sheet_{cur_idx}"
+            self.tree_sheets.selection_set(iid)
+            self.tree_sheets.see(iid)
+
+    def on_repeat_changed(self):
+        p = self.active_plate
+        if not p:
+            return
+        try:
+            val = int(self.spin_repeat.get())
+            if val < 1:
+                val = 1
+            p.repeat_count = val
+            self._refresh_sheets_table(preserve_selection=True)
+        except ValueError:
+            pass
+
+    def on_remove_sheet(self):
+        if not self.project.plates:
+            return
+        if self.current_plate_idx < 0:
+            return
+        idx = self.current_plate_idx
+        self.project.remove_plate(idx)
+
+        new_idx = min(idx, len(self.project.plates) - 1)
+        self.current_plate_idx = new_idx
+        self._refresh_sheets_table()
+        if new_idx >= 0:
+            self._select_sheet(new_idx)
+        else:
+            self._update_ui_for_active_sheet()
+
+    def on_clear_sheets(self):
+        if not self.project.plates:
+            return
+        if messagebox.askyesno("Очистить проект", "Удалить все листы из проекта?"):
+            self.project.plates.clear()
+            self.current_plate_idx = -1
+            self.project.custom_names.clear()
+            self._refresh_sheets_table()
+            self._update_ui_for_active_sheet()
+
+    def on_move_sheet(self, direction):
+        if self.current_plate_idx < 0:
+            return
+        idx = self.current_plate_idx
+        target = idx + direction
+        if 0 <= target < len(self.project.plates):
+            self.project.move_plate(idx, direction)
+            self.current_plate_idx = target
+            self._refresh_sheets_table()
+            self._select_sheet(target)
+
+    def _update_ui_for_active_sheet(self):
+        p = self.active_plate
+        if not p:
+            self.lbl_active_sheet.config(text="Параметры листа")
+            self.ent_w.delete(0, tk.END)
+            self.ent_h.delete(0, tk.END)
+            self.ent_t.delete(0, tk.END)
+            self.ent_mat.delete(0, tk.END)
+            self.spin_repeat.delete(0, tk.END)
+            self.spin_repeat.insert(0, "1")
+            self.master_groups = []
+            self.selected_group_key = None
+            self._refresh_parts_table()
+            self.render()
+            return
+
+        self.lbl_active_sheet.config(text=f"Лист #{self.current_plate_idx + 1}: {p.plate_name}")
+        self.ent_w.delete(0, tk.END)
+        self.ent_w.insert(0, str(int(p.sheet_width)))
+        self.ent_h.delete(0, tk.END)
+        self.ent_h.insert(0, str(int(p.sheet_height)))
+        self.ent_t.delete(0, tk.END)
+        self.ent_t.insert(0, str(p.thickness))
+        self.ent_mat.delete(0, tk.END)
+        self.ent_mat.insert(0, p.material)
+
+        self.spin_repeat.delete(0, tk.END)
+        self.spin_repeat.insert(0, str(p.repeat_count))
+
+        self._update_master_groups_for_active_plate()
+        self._refresh_parts_table()
+        self.render()
 
     def on_apply_sheet_params(self):
+        p = self.active_plate
+        if not p:
+            return
         try:
-            self.sheet_w = float(self.ent_w.get())
-            self.sheet_h = float(self.ent_h.get())
-            self.thickness = float(self.ent_t.get())
-            self.material = self.ent_mat.get().strip() or "SUS"
-            self._update_transformed_geometry()
-            self.render()
+            w = float(self.ent_w.get())
+            h = float(self.ent_h.get())
+            t = float(self.ent_t.get())
+            mat = self.ent_mat.get().strip() or "FE"
+
+            targets = self.project.plates if self.var_apply_all.get() else [p]
+            for pl in targets:
+                pl.sheet_width = w
+                pl.sheet_height = h
+                pl.thickness = t
+                pl.material = mat
+                pl.apply_transformations()
+
+            self._refresh_sheets_table(preserve_selection=True)
+            self._update_ui_for_active_sheet()
         except ValueError:
-            messagebox.showwarning("Некорректный ввод", "Пожалуйста, введите корректные числовые значения для размеров листа.")
+            messagebox.showwarning("Некорректный ввод", "Введите корректные числовые значения габаритов и толщины.")
+
+    # ==========================================================================
+    # ТРАНСФОРМАЦИИ РАСКРОЯ
+    # ==========================================================================
+
+    def _get_target_plates(self):
+        if self.var_apply_all.get():
+            return self.project.plates
+        return [self.active_plate] if self.active_plate else []
 
     def on_toggle_swap_axes(self):
-        self.swap_xy = not self.swap_xy
-        self._update_transformed_geometry()
-        self.render()
+        for p in self._get_target_plates():
+            p.swap_xy = not p.swap_xy
+            p.apply_transformations()
+        self._update_ui_for_active_sheet()
 
     def on_rotate(self, angle_delta):
-        self.rot_deg = (self.rot_deg + angle_delta) % 360
-        self._update_transformed_geometry()
-        self.render()
+        for p in self._get_target_plates():
+            p.rot_deg = (p.rot_deg + angle_delta) % 360
+            p.apply_transformations()
+        self._update_ui_for_active_sheet()
 
     def on_flip_x(self):
-        self.flip_x = not self.flip_x
-        self._update_transformed_geometry()
-        self.render()
+        for p in self._get_target_plates():
+            p.flip_x = not p.flip_x
+            p.apply_transformations()
+        self._update_ui_for_active_sheet()
 
     def on_flip_y(self):
-        self.flip_y = not self.flip_y
-        self._update_transformed_geometry()
-        self.render()
+        for p in self._get_target_plates():
+            p.flip_y = not p.flip_y
+            p.apply_transformations()
+        self._update_ui_for_active_sheet()
 
     def on_align_margin(self, margin=10.0):
-        if not self.current_parts and not self.current_open_cuts:
-            return
-        all_pts = []
-        for p in self.current_parts:
-            all_pts.extend(p.outer_contour.get_discrete_points())
-        for c in self.current_open_cuts:
-            all_pts.extend(c.get_discrete_points())
-
-        if all_pts:
-            min_x = min(p[0] for p in all_pts)
-            min_y = min(p[1] for p in all_pts)
-            dx = margin - min_x
-            dy = margin - min_y
-            self.offset_x += dx
-            self.offset_y += dy
-            self._update_transformed_geometry()
-            self.render()
+        for p in self._get_target_plates():
+            all_pts = []
+            for part in p.parts:
+                all_pts.extend(part.outer_contour.get_discrete_points())
+            for c in p.open_contours:
+                all_pts.extend(c.get_discrete_points())
+            if all_pts:
+                min_x = min(pt[0] for pt in all_pts)
+                min_y = min(pt[1] for pt in all_pts)
+                p.dx += (margin - min_x)
+                p.dy += (margin - min_y)
+                p.apply_transformations()
+        self._update_ui_for_active_sheet()
 
     def on_center_sheet(self):
-        if not self.current_parts and not self.current_open_cuts:
+        for p in self._get_target_plates():
+            all_pts = []
+            for part in p.parts:
+                all_pts.extend(part.outer_contour.get_discrete_points())
+            for c in p.open_contours:
+                all_pts.extend(c.get_discrete_points())
+            if all_pts:
+                min_x = min(pt[0] for pt in all_pts)
+                max_x = max(pt[0] for pt in all_pts)
+                min_y = min(pt[1] for pt in all_pts)
+                max_y = max(pt[1] for pt in all_pts)
+                nw = max_x - min_x
+                nh = max_y - min_y
+                p.dx += ((p.sheet_width - nw) / 2.0 - min_x)
+                p.dy += ((p.sheet_height - nh) / 2.0 - min_y)
+                p.apply_transformations()
+        self._update_ui_for_active_sheet()
+
+    # ==========================================================================
+    # ТАБЛИЦА И ПЕРЕИМЕНОВАНИЕ ДЕТАЛЕЙ
+    # ==========================================================================
+
+    def _update_master_groups_for_active_plate(self):
+        p = self.active_plate
+        if not p:
+            self.master_groups = []
             return
-        all_pts = []
-        for p in self.current_parts:
-            all_pts.extend(p.outer_contour.get_discrete_points())
-        for c in self.current_open_cuts:
-            all_pts.extend(c.get_discrete_points())
 
-        if all_pts:
-            min_x = min(p[0] for p in all_pts)
-            max_x = max(p[0] for p in all_pts)
-            min_y = min(p[1] for p in all_pts)
-            max_y = max(p[1] for p in all_pts)
-
-            nest_w = max_x - min_x
-            nest_h = max_y - min_y
-
-            target_x = (self.sheet_w - nest_w) / 2.0
-            target_y = (self.sheet_h - nest_h) / 2.0
-
-            dx = target_x - min_x
-            dy = target_y - min_y
-            self.offset_x += dx
-            self.offset_y += dy
-            self._update_transformed_geometry()
-            self.render()
-
-    def _update_transformed_geometry(self):
-        """Пересчет контуров с учетом трансформаций и группировка мастер-деталей (включая поворот)"""
-        transformed_closed = []
-        for c in self.raw_closed_contours:
-            tc = transform_contour(
-                c, swap_xy=self.swap_xy, rot_deg=self.rot_deg,
-                flip_x=self.flip_x, flip_y=self.flip_y,
-                dx=self.offset_x, dy=self.offset_y,
-                sheet_w=self.sheet_w, sheet_h=self.sheet_h
-            )
-            transformed_closed.append(tc)
-
-        transformed_open = []
-        for c in self.raw_open_contours:
-            tc = transform_contour(
-                c, swap_xy=self.swap_xy, rot_deg=self.rot_deg,
-                flip_x=self.flip_x, flip_y=self.flip_y,
-                dx=self.offset_x, dy=self.offset_y,
-                sheet_w=self.sheet_w, sheet_h=self.sheet_h
-            )
-            transformed_open.append(tc)
-
-        self.current_parts = build_part_hierarchy(transformed_closed)
-        self.current_open_cuts = transformed_open
-
-        # Группировка уникальных деталей с распознаванием поворота (0, 90, 180, 270)
         master_list = []
-        for part in self.current_parts:
+        for part in p.parts:
             found_master = None
             found_angle = 0
             for m in master_list:
@@ -469,7 +630,8 @@ class Iso2NspApp(tk.Tk):
                 h = round(bx[3] - bx[1], 2)
                 num_holes = len(part.holes)
                 geom_key = (min(w, h), max(w, h), num_holes)
-                def_name = self.custom_names.get(geom_key, f"{self.plate_name}_P{len(master_list) + 1}")
+
+                def_name = self.project.custom_names.get(geom_key, f"{p.plate_name}_P{len(master_list) + 1}")
 
                 master_data = {
                     'key': geom_key,
@@ -490,14 +652,7 @@ class Iso2NspApp(tk.Tk):
 
         self.master_groups = sorted(master_list, key=lambda g: g['width'] * g['height'], reverse=True)
 
-        self._refresh_parts_table()
-
-    # ==========================================================================
-    # ТАБЛИЦА И ПЕРЕИМЕНОВАНИЕ ДЕТАЛЕЙ
-    # ==========================================================================
-
     def _refresh_parts_table(self):
-        """Обновление строк таблицы деталей"""
         for item in self.tree_parts.get_children():
             self.tree_parts.delete(item)
 
@@ -518,7 +673,6 @@ class Iso2NspApp(tk.Tk):
             self.tree_parts.selection_set(selected_iid)
             self.tree_parts.see(selected_iid)
         elif self.master_groups:
-            # Выделяем первую строку по умолчанию
             first_iid = "group_0"
             self.tree_parts.selection_set(first_iid)
             self.on_part_selected(None)
@@ -540,7 +694,6 @@ class Iso2NspApp(tk.Tk):
             info_text = f"Деталь #{idx+1}: {group['width']:.1f} x {group['height']:.1f} мм ({len(group['instances'])} шт.)"
             self.lbl_selected_info.config(text=info_text, foreground="#00e5ff")
 
-            # Заполняем поле редактирования имени
             self.ent_rename.delete(0, tk.END)
             self.ent_rename.insert(0, group['name'])
             self.ent_rename.select_range(0, tk.END)
@@ -554,10 +707,8 @@ class Iso2NspApp(tk.Tk):
             return
 
         if self.selected_group_key:
-            # Обновляем кэш имен
-            self.custom_names[self.selected_group_key] = new_name
+            self.project.custom_names[self.selected_group_key] = new_name
 
-            # Обновляем деталь и все её экземпляры
             for g in self.master_groups:
                 if g['key'] == self.selected_group_key:
                     g['name'] = new_name
@@ -571,22 +722,31 @@ class Iso2NspApp(tk.Tk):
     def on_reset_all_names(self):
         if not self.master_groups:
             return
-        if messagebox.askyesno("Сброс имен", "Сбросить все пользовательские названия деталей к стандартным?"):
-            self.custom_names.clear()
+        if messagebox.askyesno("Сброс имен", "Сбросить пользовательские названия деталей к стандартным?"):
+            self.project.custom_names.clear()
+            p = self.active_plate
+            plate_name = p.plate_name if p else "Plate"
             for idx, g in enumerate(self.master_groups):
-                def_name = f"{self.plate_name}_P{idx + 1}"
+                def_name = f"{plate_name}_P{idx + 1}"
                 g['name'] = def_name
                 for part in g['instances']:
                     part.part_name = def_name
             self._refresh_parts_table()
             self.render()
 
+    # ==========================================================================
+    # СОХРАНЕНИЕ ПРОЕКТА CYPNEST (.NSP)
+    # ==========================================================================
+
     def on_save_nsp(self):
-        if not self.current_parts and not self.current_open_cuts:
-            messagebox.showwarning("Нет данных", "Сначала откройте файл ISO с траекториями.")
+        if not self.project.plates:
+            messagebox.showwarning("Нет данных", "Сначала добавьте файлы управляющих программ ЧПУ в проект.")
             return
 
-        default_name = f"{self.plate_name}.nsp"
+        job_name = self.ent_job_name.get().strip() or self.project.detect_job_name()
+        self.project.job_name = job_name
+
+        default_name = f"{job_name}.nsp"
         out_path = filedialog.asksaveasfilename(
             title="Сохранить проект раскроя CypNest",
             defaultextension=".nsp",
@@ -597,19 +757,17 @@ class Iso2NspApp(tk.Tk):
             return
 
         try:
-            gen = NspGenerator(
-                sheet_width=self.sheet_w,
-                sheet_height=self.sheet_h,
-                thickness=self.thickness,
-                material=self.material,
-                plate_name=self.plate_name,
-                parts=self.current_parts,
-                open_contours=self.current_open_cuts
-            )
-            xml_text = gen.generate_xml_string()
+            xml_text = self.project.generate_xml_string()
             with open(out_path, 'w', encoding='utf-8') as f:
                 f.write(xml_text)
-            messagebox.showinfo("Успешно", f"Файл проекта сохранен:\n{out_path}\nВсе назначенные имена деталей успешно записаны!")
+            total_parts = sum(len(p.parts) for p in self.project.plates)
+            msg = (
+                f"Проект раскроя успешно сохранен:\n{out_path}\n\n"
+                f"• Листов в проекте: {len(self.project.plates)}\n"
+                f"• Всего деталей на листах: {total_parts}\n"
+                f"• Имена деталей и тиражи листов сохранены!"
+            )
+            messagebox.showinfo("Успешно", msg)
         except Exception as e:
             messagebox.showerror("Ошибка сохранения", f"Не удалось сформировать .nsp файл:\n{e}")
 
@@ -623,16 +781,20 @@ class Iso2NspApp(tk.Tk):
         if cw < 50 or ch < 50:
             cw, ch = 700, 750
 
+        p = self.active_plate
+        sw = p.sheet_width if p else 1500.0
+        sh = p.sheet_height if p else 3000.0
+
         margin = 35
         avail_w = cw - 2 * margin
         avail_h = ch - 2 * margin
 
-        scale_x = avail_w / max(1.0, self.sheet_w)
-        scale_y = avail_h / max(1.0, self.sheet_h)
+        scale_x = avail_w / max(1.0, sw)
+        scale_y = avail_h / max(1.0, sh)
         self.zoom_scale = min(scale_x, scale_y)
 
-        draw_w = self.sheet_w * self.zoom_scale
-        draw_h = self.sheet_h * self.zoom_scale
+        draw_w = sw * self.zoom_scale
+        draw_h = sh * self.zoom_scale
 
         self.pan_x = margin + (avail_w - draw_w) / 2.0
         self.pan_y = margin + (avail_h - draw_h) / 2.0
@@ -640,21 +802,37 @@ class Iso2NspApp(tk.Tk):
         self.render()
 
     def to_screen(self, x, y):
+        p = self.active_plate
+        sh = p.sheet_height if p else 3000.0
         sx = self.pan_x + x * self.zoom_scale
-        sy = self.pan_y + (self.sheet_h - y) * self.zoom_scale
+        sy = self.pan_y + (sh - y) * self.zoom_scale
         return sx, sy
 
     def to_world(self, sx, sy):
+        p = self.active_plate
+        sh = p.sheet_height if p else 3000.0
         x = (sx - self.pan_x) / self.zoom_scale
-        y = self.sheet_h - (sy - self.pan_y) / self.zoom_scale
+        y = sh - (sy - self.pan_y) / self.zoom_scale
         return x, y
 
     def render(self):
         self.canvas.delete("all")
 
+        p = self.active_plate
+        if not p:
+            self.canvas.create_text(
+                self.canvas.winfo_width() / 2, self.canvas.winfo_height() / 2,
+                text="Нажмите '+ Добавить файлы...' для загрузки программ ЧПУ",
+                fill="#4a5568", font=("Segoe UI", 13, "bold")
+            )
+            return
+
+        sw = p.sheet_width
+        sh = p.sheet_height
+
         # 1. Граница и фон листа
         p1 = self.to_screen(0, 0)
-        p2 = self.to_screen(self.sheet_w, self.sheet_h)
+        p2 = self.to_screen(sw, sh)
         sx1, sy2 = p1
         sx2, sy1 = p2
 
@@ -663,28 +841,28 @@ class Iso2NspApp(tk.Tk):
         # Сетка шагом 100 / 500 мм
         grid_step = 500.0 if self.zoom_scale < 0.35 else 100.0
         gx = grid_step
-        while gx < self.sheet_w:
+        while gx < sw:
             lx1, ly1 = self.to_screen(gx, 0)
-            lx2, ly2 = self.to_screen(gx, self.sheet_h)
+            lx2, ly2 = self.to_screen(gx, sh)
             self.canvas.create_line(lx1, ly1, lx2, ly2, fill="#252a37", width=1)
             gx += grid_step
 
         gy = grid_step
-        while gy < self.sheet_h:
+        while gy < sh:
             lx1, ly1 = self.to_screen(0, gy)
-            lx2, ly2 = self.to_screen(self.sheet_w, gy)
+            lx2, ly2 = self.to_screen(sw, gy)
             self.canvas.create_line(lx1, ly1, lx2, ly2, fill="#252a37", width=1)
             gy += grid_step
 
-        # Текст габаритов листа
+        # Текст габаритов листа и тиража
+        info_text = f"Лист {self.current_plate_idx + 1}/{len(self.project.plates)}: {p.plate_name}  |  {sw:.0f} x {sh:.0f} x {p.thickness:.1f} мм ({p.material})  |  Тираж: {p.repeat_count} шт."
         self.canvas.create_text(
-            sx1 + 8, sy1 + 14, text=f"Лист: {self.sheet_w:.0f} x {self.sheet_h:.0f} x {self.thickness:.1f} мм ({self.material})",
+            sx1 + 8, sy1 + 14, text=info_text,
             anchor="w", fill="#00e5ff", font=("Segoe UI", 9, "bold")
         )
 
         # 2. Отрисовка деталей
-        for part in self.current_parts:
-            # Определяем, подсвечена ли эта деталь
+        for part in p.parts:
             is_selected = False
             if self.selected_group_key is not None:
                 for g in self.master_groups:
@@ -692,7 +870,6 @@ class Iso2NspApp(tk.Tk):
                         is_selected = True
                         break
 
-            # Цвета: обычная деталь - темно-зеленый / изумрудный, выбранная - ярко-золотой / желтый
             if is_selected:
                 fill_color = "#4d3d14"
                 outline_color = "#ffd700"
@@ -702,7 +879,6 @@ class Iso2NspApp(tk.Tk):
                 outline_color = "#00e676"
                 outline_width = 1.2
 
-            # Внешний контур
             pts = part.outer_contour.get_discrete_points()
             screen_pts = []
             for px, py in pts:
@@ -711,7 +887,6 @@ class Iso2NspApp(tk.Tk):
             if len(screen_pts) >= 6:
                 self.canvas.create_polygon(screen_pts, fill=fill_color, outline=outline_color, width=outline_width)
 
-            # Отверстия
             for hole in part.holes:
                 hpts = hole.get_discrete_points()
                 h_screen = []
@@ -721,8 +896,8 @@ class Iso2NspApp(tk.Tk):
                     hole_outline = "#ffea00" if is_selected else "#2979ff"
                     self.canvas.create_polygon(h_screen, fill="#1c202a", outline=hole_outline, width=1.2)
 
-        # 3. Разомкнутые резы
-        for cut in self.current_open_cuts:
+        # 3. Разомкнутые технологические резы
+        for cut in p.open_contours:
             cpts = cut.get_discrete_points()
             for i in range(len(cpts) - 1):
                 x1, y1 = self.to_screen(cpts[i][0], cpts[i][1])
