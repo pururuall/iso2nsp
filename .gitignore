@@ -5,6 +5,7 @@ __pycache__/
 *.spec
 build/
 iso2nsp_v*.exe
+*.zip
 
 # IDE
 .idea/
