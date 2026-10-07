@@ -15,6 +15,8 @@ try:
 except ImportError:
     pypdf = None
 
+from iso2nsp import compute_part_geom_key
+
 
 class LantekSheetReport:
     """Модель данных одного листа из отчета Lantek CAM"""
@@ -53,11 +55,15 @@ def parse_lantek_pdf(pdf_path: str) -> List[LantekSheetReport]:
         # Формат в тексте Lantek:
         # \n<ИмяПрограммы>\n<Ширина> <Высота> <Толщина>
         prog_match = re.search(
-            r'\n([0-9A-Za-z\-_]+(?:\s+[A-Za-z0-9\-_]+)?)\s*\n\s*(\d{3,5})\s+(\d{3,5})\s+(\d+)',
+            r'([^\n]+)\n\s*(\d{3,5}(?:\.\d+)?)\s+(\d{3,5}(?:\.\d+)?)\s+(\d+(?:\.\d+)?)',
             text
         )
         if prog_match:
-            rep.prog_name = prog_match.group(1).strip()
+            clean_prog = prog_match.group(1).strip()
+            # Очистка возможных префиксов времени/даты
+            clean_prog = re.sub(r'^\d{2}:\d{2}:\d{2}(?:\.\d+)?\s*', '', clean_prog).strip()
+            clean_prog = re.sub(r'^\d{2}\.\d{2}\.\d{4}\s*', '', clean_prog).strip()
+            rep.prog_name = clean_prog
             rep.sheet_width = float(prog_match.group(2))
             rep.sheet_height = float(prog_match.group(3))
             rep.thickness = float(prog_match.group(4))
@@ -131,32 +137,44 @@ def apply_lantek_reports_to_project(project, reports: List[LantekSheetReport]) -
         # 1. Поиск соответствующего отчета для данного листа
         target_report: Optional[LantekSheetReport] = None
         plate_base = os.path.splitext(os.path.basename(plate.file_path))[0] if plate.file_path else plate.plate_name
-        plate_name_clean = plate.plate_name.strip().upper()
+        plate_base_clean = re.sub(r'[\s_\-]+', ' ', plate_base).strip().upper()
+        plate_name_clean = re.sub(r'[\s_\-]+', ' ', plate.plate_name).strip().upper()
         plate_num_prefix = plate_base.split()[0].upper() if plate_base else ""
 
         # Приоритет А: Точное совпадение имени программы
         for idx, r in enumerate(reports):
             if idx in used_reports:
                 continue
-            r_prog_clean = r.prog_name.strip().upper()
-            if r_prog_clean and (r_prog_clean == plate_name_clean or r_prog_clean == plate_base.upper()):
+            r_prog_clean = re.sub(r'[\s_\-]+', ' ', r.prog_name).strip().upper()
+            if r_prog_clean and (r_prog_clean == plate_name_clean or r_prog_clean == plate_base_clean):
                 target_report = r
                 used_reports.add(idx)
                 break
 
-        # Приоритет Б: Совпадение по цифровому префиксу файла (например 6746)
+        # Приоритет Б: Вхождение имени программы (например '1849 FE6 01' в имени файла)
+        if not target_report:
+            for idx, r in enumerate(reports):
+                if idx in used_reports:
+                    continue
+                r_prog_clean = re.sub(r'[\s_\-]+', ' ', r.prog_name).strip().upper()
+                if r_prog_clean and (r_prog_clean in plate_base_clean or plate_base_clean in r_prog_clean):
+                    target_report = r
+                    used_reports.add(idx)
+                    break
+
+        # Приоритет В: Совпадение по цифровому префиксу файла (например 6746)
         if not target_report and plate_num_prefix:
             for idx, r in enumerate(reports):
                 if idx in used_reports:
                     continue
-                r_prog_clean = r.prog_name.strip().upper()
-                r_job_clean = r.job_title.strip().upper()
+                r_prog_clean = re.sub(r'[\s_\-]+', ' ', r.prog_name).strip().upper()
+                r_job_clean = re.sub(r'[\s_\-]+', ' ', r.job_title).strip().upper()
                 if (plate_num_prefix in r_prog_clean) or (plate_num_prefix in r_job_clean):
                     target_report = r
                     used_reports.add(idx)
                     break
 
-        # Приоритет В: Если ровно 1 лист и 1 отчет
+        # Приоритет Г: Если ровно 1 лист и 1 отчет
         if not target_report and len(project.plates) == 1 and len(reports) == 1 and 0 not in used_reports:
             target_report = reports[0]
             used_reports.add(0)
@@ -170,7 +188,7 @@ def apply_lantek_reports_to_project(project, reports: List[LantekSheetReport]) -
         if target_report.repeat_count > 0:
             plate.repeat_count = target_report.repeat_count
 
-        # 2. Сопоставление и переименование деталей
+        # 2. Сопоставление и переименование деталей на текущем листе
         if not target_report.parts or not plate.parts:
             continue
 
@@ -201,8 +219,50 @@ def apply_lantek_reports_to_project(project, reports: List[LantekSheetReport]) -
             # Назначаем имя найденным деталям
             take_qty = min(needed_qty, len(candidates))
             for c_idx in candidates[:take_qty]:
-                iso_parts[c_idx].part_name = rp['name']
+                part = iso_parts[c_idx]
+                part.part_name = rp['name']
                 used_iso_indices.add(c_idx)
                 stats['renamed_parts'] += 1
+                # Сохраняем геометрию в глобальный реестр проекта
+                gk = compute_part_geom_key(part)
+                project.custom_names[gk] = rp['name']
+
+    # 3. Сквозное распространение имен по всем листам проекта:
+    # Детали с одинаковой геометрией на разных листах автоматически получают имя
+    for pl in project.plates:
+        for pt in pl.parts:
+            gk = compute_part_geom_key(pt)
+            if gk in project.custom_names:
+                known_name = project.custom_names[gk]
+                if pt.part_name in ("", "Part") or pt.part_name.startswith(f"{pl.plate_name}_P"):
+                    pt.part_name = known_name
+                    stats['renamed_parts'] += 1
+
+    # 4. Глобальный fallback по пулу спецификации PDF:
+    # Если на каких-то листах остались непереименованные детали,
+    # находим для них подходящее имя из общего каталога спецификаций PDF заказа
+    global_report_parts = []
+    for r in reports:
+        for rp in r.parts:
+            global_report_parts.append(rp)
+    global_report_parts.sort(key=lambda x: (x.get('total', x.get('qty', 1)), x['dim1'] * x['dim2']), reverse=True)
+
+    for pl in project.plates:
+        for pt in pl.parts:
+            if pt.part_name in ("", "Part") or pt.part_name.startswith(f"{pl.plate_name}_P"):
+                bx = pt.bbox()
+                pw = bx[2] - bx[0]
+                ph = bx[3] - bx[1]
+                p_min = min(pw, ph)
+                p_max = max(pw, ph)
+                for rp in global_report_parts:
+                    r_min = min(rp['dim1'], rp['dim2'])
+                    r_max = max(rp['dim1'], rp['dim2'])
+                    if abs(p_min - r_min) <= 2.0 and abs(p_max - r_max) <= 2.0:
+                        pt.part_name = rp['name']
+                        gk = compute_part_geom_key(pt)
+                        project.custom_names[gk] = rp['name']
+                        stats['renamed_parts'] += 1
+                        break
 
     return stats

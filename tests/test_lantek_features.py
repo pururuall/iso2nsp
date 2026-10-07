@@ -134,10 +134,83 @@ def test_lantek_pdf_matching():
     return True
 
 
+def test_multisheet_cross_sheet_naming():
+    print("\n[TEST 3] Проверка многолистового сопоставления и сквозных имен деталей (1849 FE6, 10 листов)...")
+    import glob
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    iso_files = sorted(glob.glob(os.path.join(base_dir, "**", "*1849*.iso"), recursive=True))
+    pdf_files = glob.glob(os.path.join(base_dir, "**", "*1849*.pdf"), recursive=True)
+
+    if not iso_files or not pdf_files:
+        print("  [SKIP] Файлы 1849 не найдены")
+        return True
+
+    assert len(iso_files) == 10, f"Ожидалось 10 файлов 1849 FE6, найдено {len(iso_files)}"
+    pdf_path = pdf_files[0]
+
+    reports = parse_lantek_pdf(pdf_path)
+    assert len(reports) == 10, f"Ожидалось 10 страниц отчета в PDF 1849, получено {len(reports)}"
+    # Проверяем, что имена программ на каждой странице определены корректно
+    for r in reports:
+        assert r.prog_name.startswith("1849 FE6"), f"Неверное имя программы: {r.prog_name}"
+    print(f"  [OK] Все 10 страниц PDF успешно распарсены с точными именами программ (например '{reports[0].prog_name}')")
+
+    project = NestingProject()
+    for iso_path in iso_files:
+        parser = IsoParser(iso_path)
+        parser.parse()
+        plate = PlateData(
+            file_path=iso_path,
+            plate_name=os.path.splitext(os.path.basename(iso_path))[0],
+            sheet_width=parser.sheet_width,
+            sheet_height=parser.sheet_height,
+            thickness=parser.thickness,
+            material=parser.material,
+            include_cutoff=False
+        )
+        plate.raw_closed_contours = parser.closed_contours
+        plate.raw_open_contours = parser.open_contours
+        plate.swap_xy = True
+        plate.flip_y = True
+        plate.apply_transformations()
+        project.add_plate(plate)
+
+    # Применяем отчеты Lantek
+    res = apply_lantek_reports_to_project(project, reports)
+    print(f"  [OK] Сопоставлено листов: {res['matched_plates']} из {len(project.plates)}")
+    print(f"  [OK] Переименовано деталей: {res['renamed_parts']}")
+
+    assert res['matched_plates'] == 10, "Все 10 листов должны быть сопоставлены"
+
+    # Проверяем, что каждый лист имеет правильный тираж
+    plate_02 = [p for p in project.plates if "02" in p.plate_name][0]
+    plate_01 = [p for p in project.plates if "01" in p.plate_name][0]
+    assert plate_02.repeat_count == 3, f"Лист 02 должен иметь тираж 3, получено {plate_02.repeat_count}"
+    assert plate_01.repeat_count == 1, f"Лист 01 должен иметь тираж 1, получено {plate_01.repeat_count}"
+    print("  [OK] Тиражи листов из PDF корректно привязаны (Лист 02 = 3 шт, Лист 01 = 1 шт)")
+
+    # Проверяем, что НИ ОДНА деталь на всех 10 листах не осталась безымянной ('Part')
+    total_parts = sum(len(p.parts) for p in project.plates)
+    unnamed = []
+    for pl in project.plates:
+        for pt in pl.parts:
+            if pt.part_name == "Part" or pt.part_name.startswith(f"{pl.plate_name}_P"):
+                unnamed.append((pl.plate_name, pt))
+    assert len(unnamed) == 0, f"Найдено {len(unnamed)} безымянных деталей из {total_parts}!"
+    print(f"  [OK] Все {total_parts} деталей на всех 10 листах успешно получили имена из спецификации Lantek!")
+
+    # Проверяем генерацию XML
+    xml_str = project.generate_xml_string()
+    assert "1184" in xml_str, "Имена деталей должны присутствовать в NSP"
+    print("  [OK] Проект NSP сгенерирован успешно со всеми деталями и именами")
+    return True
+
+
 if __name__ == "__main__":
     t1 = test_cutoff_toggle()
     t2 = test_lantek_pdf_matching()
-    if t1 and t2:
+    t3 = test_multisheet_cross_sheet_naming()
+    if t1 and t2 and t3:
         print("\n" + "="*60)
         print("ВСЕ ТЕСТЫ НОВЫХ ФУНКЦИЙ УСПЕШНО ПРОЙДЕНЫ (100% PASS)!")
         print("="*60)

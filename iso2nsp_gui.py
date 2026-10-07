@@ -709,9 +709,9 @@ class Iso2NspApp(tk.Tk):
         if not p or not p.raw_open_contours:
             self.btn_toggle_cutoff.config(text="✂ Обрезка: отсутствует", state=tk.DISABLED)
         elif getattr(p, 'include_cutoff', False):
-            self.btn_toggle_cutoff.config(text="✂ Убрать обрезку (ВКЛ в NSP)", state=tk.NORMAL)
+            self.btn_toggle_cutoff.config(text="✂ Обрезка: ВКЛ (пойдет в NSP)", state=tk.NORMAL)
         else:
-            self.btn_toggle_cutoff.config(text="✂ Включить обрезку (ОТКЛ)", state=tk.NORMAL)
+            self.btn_toggle_cutoff.config(text="✂ Обрезка: ВЫКЛ (в NSP не идет)", state=tk.NORMAL)
 
     # ==========================================================================
     # ТАБЛИЦА И ПЕРЕИМЕНОВАНИЕ ДЕТАЛЕЙ
@@ -742,9 +742,10 @@ class Iso2NspApp(tk.Tk):
                 geom_key = compute_part_geom_key(part)
 
                 current_name = getattr(part, 'part_name', '')
-                if geom_key in self.project.custom_names:
-                    def_name = self.project.custom_names[geom_key]
-                elif current_name and not current_name.startswith(f"{p.plate_name}_P"):
+                c_name = self.project.custom_names.get(geom_key, "")
+                if c_name and c_name != "Part":
+                    def_name = c_name
+                elif current_name and current_name != "Part" and not current_name.startswith(f"{p.plate_name}_P"):
                     def_name = current_name
                     self.project.custom_names[geom_key] = def_name
                 else:
@@ -839,6 +840,12 @@ class Iso2NspApp(tk.Tk):
             for part in group['instances']:
                 part.part_name = new_name
 
+            # Сквозное переименование идентичных деталей на ВСЕХ листах проекта
+            for pl in self.project.plates:
+                for pt in pl.parts:
+                    if compute_part_geom_key(pt) == group['key']:
+                        pt.part_name = new_name
+
             self._refresh_parts_table()
             self.render()
 
@@ -847,13 +854,10 @@ class Iso2NspApp(tk.Tk):
             return
         if messagebox.askyesno("Сброс имен", "Сбросить пользовательские названия деталей к стандартным?"):
             self.project.custom_names.clear()
-            p = self.active_plate
-            plate_name = p.plate_name if p else "Plate"
-            for idx, g in enumerate(self.master_groups):
-                def_name = f"{plate_name}_P{idx + 1}"
-                g['name'] = def_name
-                for part in g['instances']:
-                    part.part_name = def_name
+            for pl in self.project.plates:
+                for pt in pl.parts:
+                    pt.part_name = "Part"
+            self._update_master_groups_for_active_plate()
             self._refresh_parts_table()
             self.render()
 
