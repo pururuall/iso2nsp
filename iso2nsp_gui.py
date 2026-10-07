@@ -241,8 +241,12 @@ class Iso2NspApp(tk.Tk):
 
         align_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
         align_frame.pack(fill=tk.X, pady=2)
-        ttk.Button(align_frame, text="⌖ Отступ 10мм", width=12, command=self.on_align_margin).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
-        ttk.Button(align_frame, text="⊡ Центрировать", width=12, command=self.on_center_sheet).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+        ttk.Button(align_frame, text="⇲ В нули (0, 0)", width=12, command=self.on_align_zero).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+        ttk.Button(align_frame, text="⌖ Отступ 10мм", width=12, command=lambda: self.on_align_margin(10.0)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+
+        align_frame2 = tk.Frame(left_sidebar, bg=self.panel_bg)
+        align_frame2.pack(fill=tk.X, pady=2)
+        ttk.Button(align_frame2, text="⊡ Центрировать", command=self.on_center_sheet).pack(fill=tk.X, padx=1)
 
         # Быстрое переключение технологической обрезки листа
         self.btn_toggle_cutoff = ttk.Button(left_sidebar, text="✂ Обрезка: отсутствует", command=self.on_toggle_cutoff)
@@ -660,33 +664,45 @@ class Iso2NspApp(tk.Tk):
             p.apply_transformations()
         self._update_ui_for_active_sheet()
 
+    def on_align_zero(self):
+        """Перемещение всей раскладки в нижний левый угол листа (X=0, Y=0, к упорам)"""
+        self.on_align_margin(margin=0.0)
+
     def on_align_margin(self, margin=10.0):
+        """
+        Выравнивание раскладки с отступом от левого и нижнего упоров (X=0, Y=0).
+        Отступ рассчитывается СТРОГО по габаритам деталей (parts), чтобы
+        технологические резы обрезки листа не искажали заданный отступ.
+        """
         for p in self._get_target_plates():
-            all_pts = []
+            parts_pts = []
             for part in p.parts:
-                all_pts.extend(part.outer_contour.get_discrete_points())
-            for c in p.open_contours:
-                all_pts.extend(c.get_discrete_points())
-            if all_pts:
-                min_x = min(pt[0] for pt in all_pts)
-                min_y = min(pt[1] for pt in all_pts)
+                parts_pts.extend(part.outer_contour.get_discrete_points())
+            if not parts_pts:
+                for c in p.open_contours:
+                    parts_pts.extend(c.get_discrete_points())
+            if parts_pts:
+                min_x = min(pt[0] for pt in parts_pts)
+                min_y = min(pt[1] for pt in parts_pts)
                 p.dx += (margin - min_x)
                 p.dy += (margin - min_y)
                 p.apply_transformations()
         self._update_ui_for_active_sheet()
 
     def on_center_sheet(self):
+        """Центрирование раскладки по центру листа (по габаритам деталей)"""
         for p in self._get_target_plates():
-            all_pts = []
+            parts_pts = []
             for part in p.parts:
-                all_pts.extend(part.outer_contour.get_discrete_points())
-            for c in p.open_contours:
-                all_pts.extend(c.get_discrete_points())
-            if all_pts:
-                min_x = min(pt[0] for pt in all_pts)
-                max_x = max(pt[0] for pt in all_pts)
-                min_y = min(pt[1] for pt in all_pts)
-                max_y = max(pt[1] for pt in all_pts)
+                parts_pts.extend(part.outer_contour.get_discrete_points())
+            if not parts_pts:
+                for c in p.open_contours:
+                    parts_pts.extend(c.get_discrete_points())
+            if parts_pts:
+                min_x = min(pt[0] for pt in parts_pts)
+                max_x = max(pt[0] for pt in parts_pts)
+                min_y = min(pt[1] for pt in parts_pts)
+                max_y = max(pt[1] for pt in parts_pts)
                 nw = max_x - min_x
                 nh = max_y - min_y
                 p.dx += ((p.sheet_width - nw) / 2.0 - min_x)
