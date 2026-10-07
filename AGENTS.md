@@ -18,6 +18,7 @@ The codebase consists of two primary modules and a standalone executable:
   - Multi-sheet jobs manager (batch loading, reordering, sheet repeat counts).
   - Interactive parts table with visual highlighting on the canvas and renaming capabilities.
 - **`pdf_report.py`**: Production PDF report generator matching the Lantek CAM report standard (sheet vector drawing, parts numbering, material utilization, sheet weight, parts specification table).
+- **`lantek_pdf.py`**: Parser and matcher for original Lantek CAM PDF reports (auto-naming parts, importing sheet repeat counts and job names).
 - **`iso2nsp.exe`**: Precompiled standalone Windows executable bundled with PyInstaller. Requires no Python runtime and no administrative privileges.
 
 ---
@@ -68,9 +69,9 @@ The XML structure requires a two-level hierarchy:
 
 ## 4. Building the Standalone Executable
 
-To compile `iso2nsp.exe` with bundled ReportLab:
+To compile `iso2nsp.exe` with bundled ReportLab and pypdf:
 ```bash
-uvx --with reportlab pyinstaller --onefile --noconsole --name iso2nsp --distpath "." iso2nsp_gui.py
+uvx --with reportlab --with pypdf pyinstaller --onefile --noconsole --name iso2nsp --distpath "." iso2nsp_gui.py
 ```
 This produces a self-contained single-file executable that does not require Python, administrative permissions, or any external software.
 

@@ -169,6 +169,9 @@ class Iso2NspApp(tk.Tk):
         ttk.Button(btn_sheets_row, text="✕", width=3, style="Danger.TButton", command=self.on_remove_sheet).pack(side=tk.LEFT, padx=1)
         ttk.Button(btn_sheets_row, text="⟳", width=3, command=self.on_clear_sheets).pack(side=tk.LEFT, padx=1)
 
+        btn_attach_pdf = ttk.Button(left_sidebar, text="📑 Подгрузить отчеты Lantek (PDF)", command=self.on_attach_pdf)
+        btn_attach_pdf.pack(fill=tk.X, pady=(0, 4))
+
         # Редактирование тиража выбранного листа
         rep_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
         rep_frame.pack(fill=tk.X, pady=(0, 6))
@@ -240,6 +243,10 @@ class Iso2NspApp(tk.Tk):
         align_frame.pack(fill=tk.X, pady=2)
         ttk.Button(align_frame, text="⌖ Отступ 10мм", width=12, command=self.on_align_margin).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
         ttk.Button(align_frame, text="⊡ Центрировать", width=12, command=self.on_center_sheet).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+
+        # Быстрое переключение технологической обрезки листа
+        self.btn_toggle_cutoff = ttk.Button(left_sidebar, text="✂ Обрезка: отсутствует", command=self.on_toggle_cutoff)
+        self.btn_toggle_cutoff.pack(fill=tk.X, pady=(3, 2))
 
         ttk.Separator(left_sidebar, orient="horizontal").pack(fill=tk.X, pady=6)
 
@@ -336,7 +343,7 @@ class Iso2NspApp(tk.Tk):
 
         self.lbl_legend = tk.Label(
             self.status_bar,
-            text="■ Лист (Голубой)   ■ Детали (Зеленый)   ■ Выбранная (Желтый)   ■ Отверстия (Синий)   ■ Резы (Красный)",
+            text="■ Лист (Голубой)   ■ Детали (Зеленый)   ■ Выбранная (Желтый)   ■ Отверстия (Синий)   ■ Обрезка (Красный - вкл / Пунктир - откл)",
             bg="#1b1e27", fg="#a0aec0", font=("Segoe UI", 8)
         )
         self.lbl_legend.pack(side=tk.RIGHT)
@@ -357,11 +364,75 @@ class Iso2NspApp(tk.Tk):
     # ==========================================================================
 
     def on_open_files(self):
-        filetypes = [("Файлы программ ЧПУ (*.iso;*.cnc;*.nc;*.tap;*.txt)", "*.iso;*.cnc;*.nc;*.tap;*.txt"), ("Все файлы", "*.*")]
-        init_dir = r"d:\Пупупу\тест" if os.path.exists(r"d:\Пупупу\тест") else os.getcwd()
-        paths = filedialog.askopenfilenames(title="Выберите файлы управляющих программ ЧПУ", filetypes=filetypes, initialdir=init_dir)
+        filetypes = [
+            ("Все файлы раскроя и отчетов (*.iso;*.cnc;*.nc;*.tap;*.txt;*.pdf)", "*.iso;*.cnc;*.nc;*.tap;*.txt;*.pdf"),
+            ("Файлы программ ЧПУ (*.iso;*.cnc;*.nc;*.tap;*.txt)", "*.iso;*.cnc;*.nc;*.tap;*.txt"),
+            ("Отчеты Lantek (PDF) (*.pdf)", "*.pdf"),
+            ("Все файлы (*.*)", "*.*")
+        ]
+        init_dir = r"d:\Пупупу\пример работ с Lantec" if os.path.exists(r"d:\Пупупу\пример работ с Lantec") else (r"d:\Пупупу\тест" if os.path.exists(r"d:\Пупупу\тест") else os.getcwd())
+        paths = filedialog.askopenfilenames(title="Выберите файлы программ ЧПУ или отчеты Lantek PDF", filetypes=filetypes, initialdir=init_dir)
         if paths:
-            self.load_iso_files(list(paths))
+            self.load_mixed_files(list(paths))
+
+    def load_mixed_files(self, paths):
+        cnc_paths = [p for p in paths if not p.lower().endswith('.pdf')]
+        pdf_paths = [p for p in paths if p.lower().endswith('.pdf')]
+
+        if cnc_paths:
+            self.load_iso_files(cnc_paths)
+
+        if pdf_paths:
+            self.attach_lantek_pdfs(pdf_paths)
+
+    def on_attach_pdf(self):
+        filetypes = [("Отчеты Lantek (PDF) (*.pdf)", "*.pdf"), ("Все файлы", "*.*")]
+        init_dir = r"d:\Пупупу\пример работ с Lantec" if os.path.exists(r"d:\Пупупу\пример работ с Lantec") else os.getcwd()
+        paths = filedialog.askopenfilenames(title="Выберите PDF-отчеты Lantek для привязки", filetypes=filetypes, initialdir=init_dir)
+        if paths:
+            self.attach_lantek_pdfs(list(paths))
+
+    def attach_lantek_pdfs(self, pdf_paths):
+        if not pdf_paths:
+            return
+        try:
+            from lantek_pdf import parse_lantek_pdf, apply_lantek_reports_to_project
+            all_reports = []
+            for pf in pdf_paths:
+                try:
+                    all_reports.extend(parse_lantek_pdf(pf))
+                except Exception as ex:
+                    messagebox.showwarning("Ошибка парсинга PDF", f"Не удалось прочитать {os.path.basename(pf)}:\n{ex}")
+
+            if not all_reports:
+                return
+
+            res = apply_lantek_reports_to_project(self.project, all_reports)
+
+            if res.get('detected_job_name'):
+                self.ent_job_name.delete(0, tk.END)
+                self.ent_job_name.insert(0, self.project.job_name)
+
+            self._refresh_sheets_table()
+            self._update_ui_for_active_sheet()
+            self.render()
+
+            msg = (
+                f"Обработано отчетов Lantek: {len(all_reports)}\n\n"
+                f"• Листов сопоставлено: {res['matched_plates']}\n"
+                f"• Деталей переименовано: {res['renamed_parts']}"
+            )
+            if res.get('detected_job_name'):
+                msg += f"\n• Имя заказа: {res['detected_job_name']}"
+            messagebox.showinfo("Отчеты Lantek привязаны", msg)
+        except ImportError:
+            messagebox.showwarning(
+                "Требуется pypdf",
+                "Для чтения отчетов Lantek PDF требуется библиотека 'pypdf'.\n"
+                "Установите ее командой:\npip install pypdf"
+            )
+        except Exception as e:
+            messagebox.showerror("Ошибка привязки PDF", f"Не удалось привязать отчеты:\n{e}")
 
     def load_iso_files(self, paths):
         if not paths:
@@ -382,7 +453,8 @@ class Iso2NspApp(tk.Tk):
                     sheet_height=parser.sheet_height,
                     thickness=parser.thickness,
                     material=parser.material,
-                    repeat_count=1
+                    repeat_count=1,
+                    include_cutoff=False
                 )
                 plate.raw_closed_contours = parser.closed_contours
                 plate.raw_open_contours = parser.open_contours
@@ -510,6 +582,7 @@ class Iso2NspApp(tk.Tk):
             self.master_groups = []
             self.selected_group_key = None
             self._refresh_parts_table()
+            self.update_cutoff_button_ui()
             self.render()
             return
 
@@ -528,6 +601,7 @@ class Iso2NspApp(tk.Tk):
 
         self._update_master_groups_for_active_plate()
         self._refresh_parts_table()
+        self.update_cutoff_button_ui()
         self.render()
 
     def on_apply_sheet_params(self):
@@ -620,6 +694,25 @@ class Iso2NspApp(tk.Tk):
                 p.apply_transformations()
         self._update_ui_for_active_sheet()
 
+    def on_toggle_cutoff(self):
+        p = self.active_plate
+        if not p:
+            return
+        new_val = not getattr(p, 'include_cutoff', False)
+        for pl in self._get_target_plates():
+            pl.include_cutoff = new_val
+        self.update_cutoff_button_ui()
+        self.render()
+
+    def update_cutoff_button_ui(self):
+        p = self.active_plate
+        if not p or not p.raw_open_contours:
+            self.btn_toggle_cutoff.config(text="✂ Обрезка: отсутствует", state=tk.DISABLED)
+        elif getattr(p, 'include_cutoff', False):
+            self.btn_toggle_cutoff.config(text="✂ Убрать обрезку (ВКЛ в NSP)", state=tk.NORMAL)
+        else:
+            self.btn_toggle_cutoff.config(text="✂ Включить обрезку (ОТКЛ)", state=tk.NORMAL)
+
     # ==========================================================================
     # ТАБЛИЦА И ПЕРЕИМЕНОВАНИЕ ДЕТАЛЕЙ
     # ==========================================================================
@@ -648,7 +741,14 @@ class Iso2NspApp(tk.Tk):
                 num_holes = len(part.holes)
                 geom_key = compute_part_geom_key(part)
 
-                def_name = self.project.custom_names.get(geom_key, f"{p.plate_name}_P{len(master_list) + 1}")
+                current_name = getattr(part, 'part_name', '')
+                if geom_key in self.project.custom_names:
+                    def_name = self.project.custom_names[geom_key]
+                elif current_name and not current_name.startswith(f"{p.plate_name}_P"):
+                    def_name = current_name
+                    self.project.custom_names[geom_key] = def_name
+                else:
+                    def_name = f"{p.plate_name}_P{len(master_list) + 1}"
 
                 master_data = {
                     'key': geom_key,
@@ -970,13 +1070,31 @@ class Iso2NspApp(tk.Tk):
                     hole_outline = "#ffea00" if is_selected else "#2979ff"
                     self.canvas.create_polygon(h_screen, fill="#1c202a", outline=hole_outline, width=1.2)
 
-        # 3. Разомкнутые технологические резы
+        # 3. Разомкнутые технологические резы (обрезка листа)
         for cut in p.open_contours:
             cpts = cut.get_discrete_points()
+            if not cpts:
+                continue
+            is_inc = getattr(p, 'include_cutoff', False)
+            line_color = "#ff1744" if is_inc else "#6e7681"
+            line_dash = () if is_inc else (6, 4)
+            line_w = 2 if is_inc else 1.5
+
             for i in range(len(cpts) - 1):
                 x1, y1 = self.to_screen(cpts[i][0], cpts[i][1])
                 x2, y2 = self.to_screen(cpts[i+1][0], cpts[i+1][1])
-                self.canvas.create_line(x1, y1, x2, y2, fill="#ff1744", width=2, dash=(4, 2))
+                self.canvas.create_line(x1, y1, x2, y2, fill=line_color, width=line_w, dash=line_dash)
+
+            if not is_inc and len(cpts) >= 2:
+                mid_x = (cpts[0][0] + cpts[-1][0]) / 2
+                mid_y = (cpts[0][1] + cpts[-1][1]) / 2
+                sx, sy = self.to_screen(mid_x, mid_y)
+                self.canvas.create_text(
+                    sx, sy - 8,
+                    text="✂ Обрезка (откл.)",
+                    fill="#8b949e",
+                    font=("Segoe UI", 8, "italic")
+                )
 
     # ==========================================================================
     # СОБЫТИЯ МЫШИ (ZOOM & PAN)

@@ -527,7 +527,7 @@ class PlateData:
     def __init__(self, file_path: str, plate_name: str = "",
                  sheet_width: float = 1500.0, sheet_height: float = 3000.0,
                  thickness: float = 6.0, material: str = "FE",
-                 repeat_count: int = 1):
+                 repeat_count: int = 1, include_cutoff: bool = False):
         self.file_path = file_path
         self.plate_name = plate_name or (os.path.splitext(os.path.basename(file_path))[0] if file_path else "Plate")
         self.sheet_width = sheet_width
@@ -535,6 +535,7 @@ class PlateData:
         self.thickness = thickness
         self.material = material
         self.repeat_count = max(1, int(repeat_count))
+        self.include_cutoff = include_cutoff  # По умолчанию False: обрезка листа не переносится в NSP
         self.guid = str(uuid.uuid4())
 
         # Исходные контуры (в координатах станка)
@@ -815,8 +816,9 @@ class NestingProject:
                     self._append_polyline(part_shapes, hole, layer="I")
                 self._append_polyline(part_shapes, part.outer_contour, layer=None)
 
-            for open_cut in plate.open_contours:
-                self._append_polyline(shapes, open_cut, layer=None)
+            if getattr(plate, 'include_cutoff', False):
+                for open_cut in plate.open_contours:
+                    self._append_polyline(shapes, open_cut, layer=None)
 
             prof_info = ET.SubElement(plate_node, 'PlateProfilesInfo')
             for part in plate.parts:
@@ -881,18 +883,24 @@ def convert_iso_to_nsp(input_paths, output_path: str,
                        orientation='auto', swap_axes=None, rotate_deg=0,
                        flip_x=False, flip_y=False,
                        sheet_size=None, thickness=None, material=None,
-                       repeats=None, pdf_output=None):
+                       repeats=None, pdf_output=None,
+                       include_cutoff=False, lantek_pdfs=None):
     """
     Пайплайн конвертации одного или нескольких ISO/CNC файлов в проект CypNest .nsp
     """
     if isinstance(input_paths, str):
-        paths = [input_paths]
+        raw_paths = [input_paths]
     else:
-        paths = list(input_paths)
+        raw_paths = list(input_paths)
+
+    cnc_paths = [p for p in raw_paths if not p.lower().endswith('.pdf')]
+    pdf_list = [p for p in raw_paths if p.lower().endswith('.pdf')]
+    if lantek_pdfs:
+        pdf_list.extend(lantek_pdfs)
 
     project = NestingProject(job_name=job_name or "")
 
-    for idx, path in enumerate(paths):
+    for idx, path in enumerate(cnc_paths):
         parser = IsoParser(path)
         parser.parse()
 
@@ -928,7 +936,8 @@ def convert_iso_to_nsp(input_paths, output_path: str,
             sheet_height=sh,
             thickness=th,
             material=mat,
-            repeat_count=rep
+            repeat_count=rep,
+            include_cutoff=include_cutoff
         )
         plate.raw_closed_contours = parser.closed_contours
         plate.raw_open_contours = parser.open_contours
@@ -939,6 +948,21 @@ def convert_iso_to_nsp(input_paths, output_path: str,
         plate.apply_transformations()
 
         project.add_plate(plate)
+
+    # Применение метаданных из отчетов Lantek PDF, если они переданы
+    if pdf_list:
+        try:
+            from lantek_pdf import parse_lantek_pdf, apply_lantek_reports_to_project
+            all_reports = []
+            for pf in pdf_list:
+                all_reports.extend(parse_lantek_pdf(pf))
+            res = apply_lantek_reports_to_project(project, all_reports)
+            if res.get('matched_plates'):
+                print(f"[OK] Подвязано отчетов Lantek PDF: {res['matched_plates']}, переименовано деталей: {res['renamed_parts']}")
+        except ImportError:
+            print("[WARN] Для чтения отчетов Lantek PDF требуется библиотека pypdf: pip install pypdf")
+        except Exception as e:
+            print(f"[WARN] Ошибка при чтении отчетов Lantek PDF: {e}")
 
     if job_name:
         project.job_name = job_name
@@ -977,7 +1001,7 @@ def main():
     arg_parser = argparse.ArgumentParser(
         description="iso2nsp: Конвертер G-кода ISO ЧПУ в проект раскроя CypNest .nsp"
     )
-    arg_parser.add_argument("inputs", nargs="+", help="Один или несколько входных файлов .iso / .cnc")
+    arg_parser.add_argument("inputs", nargs="+", help="Один или несколько входных файлов .iso / .cnc / .pdf")
     arg_parser.add_argument("-o", "--output", help="Выходной файл .nsp (по умолчанию: {имя_заказа}.nsp)")
     arg_parser.add_argument("--job-name", help="Наименование программы / заказа")
     arg_parser.add_argument("--repeats", nargs="*", type=int, help="Тираж для каждого листа (например, 1 2 1)")
@@ -992,6 +1016,8 @@ def main():
     arg_parser.add_argument("--thickness", type=float, help="Толщина листа в мм")
     arg_parser.add_argument("--material", help="Марка материала (например: FE, SS, AL)")
     arg_parser.add_argument("--pdf", nargs="?", const="auto", help="Сформировать производственный PDF-отчет (стиль Lantek CAM)")
+    arg_parser.add_argument("--include-cutoff", action="store_true", help="Включить перенос линий обрезки листа в NSP (по умолчанию: отключено)")
+    arg_parser.add_argument("--lantek-pdf", nargs="*", help="Файлы отчетов Lantek PDF для автоматического назначения имен и тиражей")
 
     args = arg_parser.parse_args()
 
@@ -1000,7 +1026,9 @@ def main():
     elif len(args.inputs) == 1:
         out_file = os.path.splitext(args.inputs[0])[0] + ".nsp"
     else:
-        names = [os.path.splitext(os.path.basename(f))[0] for f in args.inputs]
+        names = [os.path.splitext(os.path.basename(f))[0] for f in args.inputs if not f.lower().endswith('.pdf')]
+        if not names:
+            names = [os.path.splitext(os.path.basename(f))[0] for f in args.inputs]
         prefix = re.sub(r'[\s_\-#]+$', '', os.path.commonprefix(names).strip())
         out_file = (prefix if len(prefix) >= 3 else names[0]) + ".nsp"
 
@@ -1021,7 +1049,9 @@ def main():
         thickness=args.thickness,
         material=args.material,
         repeats=args.repeats,
-        pdf_output=pdf_out
+        pdf_output=pdf_out,
+        include_cutoff=args.include_cutoff,
+        lantek_pdfs=args.lantek_pdf
     )
 
 
