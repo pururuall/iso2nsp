@@ -206,11 +206,47 @@ def test_multisheet_cross_sheet_naming():
     return True
 
 
+def test_bottom_left_sort():
+    print("\n[TEST 4] Проверка сортировки порядка резки от упоров (0, 0)...")
+    from iso2nsp import sort_parts_from_bottom_left
+    iso_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), "samples", "1168 FE6.iso")
+    if not os.path.exists(iso_file):
+        print("  [SKIP] samples/1168 FE6.iso не найден")
+        return True
+
+    parser = IsoParser(iso_file)
+    parser.parse()
+    plate = PlateData(iso_file, sheet_width=1500, sheet_height=3000)
+    plate.raw_closed_contours = parser.closed_contours
+    plate.raw_open_contours = parser.open_contours
+    plate.swap_xy = True
+    plate.flip_y = True
+    plate.rot_deg = 180
+    plate.apply_transformations()
+
+    initial_first = plate.parts[0]
+    sorted_parts = sort_parts_from_bottom_left(plate.parts)
+
+    assert len(sorted_parts) == len(plate.parts), "Количество деталей не должно измениться"
+
+    # Проверяем, что первая деталь после сортировки ближе к (0, 0), чем до нее
+    def get_dist(p):
+        bx = p.bbox()
+        return ((bx[0]+bx[2])/2)**2 + ((bx[1]+bx[3])/2)**2
+
+    first_sorted = sorted_parts[0]
+    all_dists = [get_dist(p) for p in sorted_parts]
+    assert get_dist(first_sorted) == min(all_dists), "Первая деталь после сортировки должна быть строго ближайшей к упорам (0, 0)"
+    print(f"  [OK] Первая деталь успешно назначена у базовых упоров (дистанция до 0,0 минимальна: {get_dist(first_sorted)**0.5:.1f} мм)")
+    return True
+
+
 if __name__ == "__main__":
     t1 = test_cutoff_toggle()
     t2 = test_lantek_pdf_matching()
     t3 = test_multisheet_cross_sheet_naming()
-    if t1 and t2 and t3:
+    t4 = test_bottom_left_sort()
+    if t1 and t2 and t3 and t4:
         print("\n" + "="*60)
         print("ВСЕ ТЕСТЫ НОВЫХ ФУНКЦИЙ УСПЕШНО ПРОЙДЕНЫ (100% PASS)!")
         print("="*60)

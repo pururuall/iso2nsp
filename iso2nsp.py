@@ -518,6 +518,45 @@ def build_part_hierarchy(closed_contours):
     return parts
 
 
+def sort_parts_from_bottom_left(parts):
+    """
+    Сортировка порядка деталей раскроя от базовых упоров станка (0, 0)
+    (нижний левый угол, 'синяя стрелка').
+    Продвижение снизу вверх с минимизацией холостых перемещений (G00).
+    """
+    if not parts:
+        return []
+
+    centers = []
+    for p in parts:
+        bx = p.bbox()
+        centers.append(((bx[0] + bx[2]) / 2.0, (bx[1] + bx[3]) / 2.0))
+
+    unvisited = list(range(len(parts)))
+    sorted_parts = []
+    curr_x, curr_y = 0.0, 0.0
+
+    while unvisited:
+        best_idx = None
+        best_cost = float('inf')
+
+        for idx in unvisited:
+            cx, cy = centers[idx]
+            dist = math.hypot(cx - curr_x, cy - curr_y)
+            y_penalty = max(0.0, curr_y - cy) * 1.5
+            cost = dist + y_penalty
+
+            if cost < best_cost:
+                best_cost = cost
+                best_idx = idx
+
+        sorted_parts.append(parts[best_idx])
+        curr_x, curr_y = centers[best_idx]
+        unvisited.remove(best_idx)
+
+    return sorted_parts
+
+
 # ==============================================================================
 # 5. МОДЕЛЬ ДАННЫХ И ГЕНЕРАТОР XML CYPNEST (.NSP)
 # ==============================================================================

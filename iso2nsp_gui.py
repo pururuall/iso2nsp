@@ -18,15 +18,17 @@ from tkinter import ttk, filedialog, messagebox
 from iso2nsp import (
     IsoParser, Point, Segment, Contour, PartInstance,
     build_part_hierarchy, transform_contour, compute_part_geom_key,
-    PlateData, NestingProject, parts_match_rotation
+    PlateData, NestingProject, parts_match_rotation, sort_parts_from_bottom_left
 )
+
+APP_VERSION = "2.4.0-test"
 
 
 class Iso2NspApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title("iso2nsp - Конвертер раскроя ISO G-код -> CypNest .nsp (Многолистовые проекты)")
+        self.title(f"iso2nsp v{APP_VERSION} [ТЕСТОВАЯ ВЕРСИЯ] — Конвертер раскроя ISO -> CypNest .nsp")
         self.geometry("1440x880")
         self.minsize(1120, 700)
 
@@ -246,7 +248,8 @@ class Iso2NspApp(tk.Tk):
 
         align_frame2 = tk.Frame(left_sidebar, bg=self.panel_bg)
         align_frame2.pack(fill=tk.X, pady=2)
-        ttk.Button(align_frame2, text="⊡ Центрировать", command=self.on_center_sheet).pack(fill=tk.X, padx=1)
+        ttk.Button(align_frame2, text="⊡ Центрировать", width=12, command=self.on_center_sheet).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+        ttk.Button(align_frame2, text="⚡ Резка от упоров", width=12, command=self.on_sort_bottom_left).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
 
         # Быстрое переключение технологической обрезки листа
         self.btn_toggle_cutoff = ttk.Button(left_sidebar, text="✂ Обрезка: отсутствует", command=self.on_toggle_cutoff)
@@ -710,6 +713,24 @@ class Iso2NspApp(tk.Tk):
                 p.apply_transformations()
         self._update_ui_for_active_sheet()
 
+    def on_sort_bottom_left(self):
+        """Переупорядочивание деталей раскроя от базовых упоров (0,0) - старт резки из нижнего левого угла (синяя стрелка)"""
+        target_plates = self._get_target_plates()
+        if not target_plates:
+            return
+        for p in target_plates:
+            p.parts = sort_parts_from_bottom_left(p.parts)
+        self._update_master_groups_for_active_plate()
+        self._refresh_parts_table()
+        self.render()
+        messagebox.showinfo(
+            "Порядок резки оптимизирован",
+            "Порядок резки деталей переупорядочен от нижнего левого угла (упоры X=0, Y=0):\n\n"
+            "• Станок начнет резку с ближайшей к упорам детали (синяя стрелка);\n"
+            "• Траектория оптимизирована снизу вверх без лишних холостых перемещений (G00);\n"
+            "• Первая деталь отмечена маркером '▶ Старт #1' на чертеже."
+        )
+
     def on_toggle_cutoff(self):
         p = self.active_plate
         if not p:
@@ -1089,6 +1110,35 @@ class Iso2NspApp(tk.Tk):
                 if len(h_screen) >= 6:
                     hole_outline = "#ffea00" if is_selected else "#2979ff"
                     self.canvas.create_polygon(h_screen, fill="#1c202a", outline=hole_outline, width=1.2)
+
+        # Маркер первой детали (точка станка / старт резки)
+        if p.parts:
+            first_pt = p.parts[0]
+            fbx = first_pt.bbox()
+            fcx = (fbx[0] + fbx[2]) / 2.0
+            fcy = (fbx[1] + fbx[3]) / 2.0
+            fsx, fsy = self.to_screen(fcx, fcy)
+            self.canvas.create_text(
+                fsx, fsy,
+                text="▶ Старт #1",
+                fill="#00e5ff",
+                font=("Segoe UI", 9, "bold")
+            )
+
+        # Обозначение физических упоров станка (зеленые штрихи на X=0 и Y=0)
+        stop_len = 10
+        for stop_y in range(100, int(sh), 200):
+            sx0, sy0 = self.to_screen(0, stop_y)
+            self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
+        for stop_x in range(100, int(sw), 200):
+            sx0, sy0 = self.to_screen(stop_x, 0)
+            self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
+
+        # Текстовые метки упоров
+        u_lx, u_ly = self.to_screen(0, sh / 2)
+        self.canvas.create_text(u_lx - 16, u_ly, text="◀ Упор X=0", fill="#76ff03", font=("Segoe UI", 8, "bold"), angle=90)
+        u_bx, u_by = self.to_screen(sw / 2, 0)
+        self.canvas.create_text(u_bx, u_by + 16, text="▼ Упор Y=0", fill="#76ff03", font=("Segoe UI", 8, "bold"))
 
         # 3. Разомкнутые технологические резы (обрезка листа)
         for cut in p.open_contours:
