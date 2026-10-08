@@ -21,7 +21,7 @@ from iso2nsp import (
     PlateData, NestingProject, parts_match_rotation, sort_parts_from_bottom_left
 )
 
-APP_VERSION = "2.4.0-test"
+APP_VERSION = "2.4.0"
 IS_TEST_VERSION = "test" in APP_VERSION.lower()
 
 EMBEDDED_LICENSE_TEXT = """УСЛОВИЯ ИСПОЛЬЗОВАНИЯ И ОТКАЗ ОТ ОТВЕТСТВЕННОСТИ (LICENSE)
@@ -271,21 +271,19 @@ class Iso2NspApp(tk.Tk):
         align_frame2 = tk.Frame(left_sidebar, bg=self.panel_bg)
         align_frame2.pack(fill=tk.X, pady=2)
         ttk.Button(align_frame2, text="⊡ Центрировать", width=12, command=self.on_center_sheet).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
-        if IS_TEST_VERSION:
-            ttk.Button(align_frame2, text="⚡ Резка от упоров", width=12, command=self.on_sort_bottom_left).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+        ttk.Button(align_frame2, text="⚡ Резка от упоров", width=12, command=self.on_sort_bottom_left).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
 
         # Быстрое переключение технологической обрезки листа
         self.btn_toggle_cutoff = ttk.Button(left_sidebar, text="✂ Обрезка: отсутствует", command=self.on_toggle_cutoff)
         self.btn_toggle_cutoff.pack(fill=tk.X, pady=(3, 2))
 
-        if IS_TEST_VERSION:
-            # Переключение команды возврата станка к нулевым координатам (End 0;0)
-            self.btn_toggle_end_zero = ttk.Button(
-                left_sidebar,
-                text="⌂ End 0;0: ВЫКЛ (возврат в ноль)",
-                command=self.on_toggle_end_zero
-            )
-            self.btn_toggle_end_zero.pack(fill=tk.X, pady=(2, 2))
+        # Переключение команды возврата станка к нулевым координатам (End 0;0)
+        self.btn_toggle_end_zero = ttk.Button(
+            left_sidebar,
+            text="⌂ End 0;0: ВЫКЛ (возврат в ноль)",
+            command=self.on_toggle_end_zero
+        )
+        self.btn_toggle_end_zero.pack(fill=tk.X, pady=(2, 2))
 
         ttk.Separator(left_sidebar, orient="horizontal").pack(fill=tk.X, pady=6)
 
@@ -1256,41 +1254,40 @@ class Iso2NspApp(tk.Tk):
                     hole_outline = "#ffea00" if is_selected else "#2979ff"
                     self.canvas.create_polygon(h_screen, fill="#1c202a", outline=hole_outline, width=1.2)
 
-        if IS_TEST_VERSION:
-            # Маркер первой детали (точка станка / старт резки)
-            if p.parts:
-                first_pt = p.parts[0]
-                fbx = first_pt.bbox()
-                fcx = (fbx[0] + fbx[2]) / 2.0
-                fcy = (fbx[1] + fbx[3]) / 2.0
-                fsx, fsy = self.to_screen(fcx, fcy)
-                self.canvas.create_text(
-                    fsx, fsy,
-                    text="▶ Старт #1",
-                    fill="#00e5ff",
-                    font=("Segoe UI", 9, "bold")
-                )
+        # Маркер первой детали (точка станка / старт резки)
+        if p.parts:
+            first_pt = p.parts[0]
+            fbx = first_pt.bbox()
+            fcx = (fbx[0] + fbx[2]) / 2.0
+            fcy = (fbx[1] + fbx[3]) / 2.0
+            fsx, fsy = self.to_screen(fcx, fcy)
+            self.canvas.create_text(
+                fsx, fsy,
+                text="▶ Старт #1",
+                fill="#00e5ff",
+                font=("Segoe UI", 9, "bold")
+            )
 
-            # Обозначение физических упоров станка (зеленые штрихи на X=0 и Y=0)
-            stop_len = 10
-            for stop_y in range(100, int(sh), 200):
-                sx0, sy0 = self.to_screen(0, stop_y)
-                self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
-            for stop_x in range(100, int(sw), 200):
-                sx0, sy0 = self.to_screen(stop_x, 0)
-                self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
+        # Обозначение физических упоров станка (зеленые штрихи на X=0 и Y=0)
+        stop_len = 10
+        for stop_y in range(100, int(sh), 200):
+            sx0, sy0 = self.to_screen(0, stop_y)
+            self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
+        for stop_x in range(100, int(sw), 200):
+            sx0, sy0 = self.to_screen(stop_x, 0)
+            self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
 
-            # Текстовые метки упоров
-            u_lx, u_ly = self.to_screen(0, sh / 2)
-            self.canvas.create_text(u_lx - 16, u_ly, text="◀ Упор X=0", fill="#76ff03", font=("Segoe UI", 8, "bold"), angle=90)
-            u_bx, u_by = self.to_screen(sw / 2, 0)
-            self.canvas.create_text(u_bx, u_by + 16, text="▼ Упор Y=0", fill="#76ff03", font=("Segoe UI", 8, "bold"))
+        # Текстовые метки упоров
+        u_lx, u_ly = self.to_screen(0, sh / 2)
+        self.canvas.create_text(u_lx - 16, u_ly, text="◀ Упор X=0", fill="#76ff03", font=("Segoe UI", 8, "bold"), angle=90)
+        u_bx, u_by = self.to_screen(sw / 2, 0)
+        self.canvas.create_text(u_bx, u_by + 16, text="▼ Упор Y=0", fill="#76ff03", font=("Segoe UI", 8, "bold"))
 
-            # Обозначение команды возврата станка в нули (End 0;0)
-            if getattr(p, 'return_to_zero', False):
-                z_sx, z_sy = self.to_screen(0, 0)
-                self.canvas.create_oval(z_sx - 6, z_sy - 6, z_sx + 6, z_sy + 6, fill="#00e5ff", outline="#ffffff", width=1.5)
-                self.canvas.create_text(z_sx + 36, z_sy - 12, text="⌂ End (0,0)", fill="#00e5ff", font=("Segoe UI", 8, "bold"))
+        # Обозначение команды возврата станка в нули (End 0;0)
+        if getattr(p, 'return_to_zero', False):
+            z_sx, z_sy = self.to_screen(0, 0)
+            self.canvas.create_oval(z_sx - 6, z_sy - 6, z_sx + 6, z_sy + 6, fill="#00e5ff", outline="#ffffff", width=1.5)
+            self.canvas.create_text(z_sx + 36, z_sy - 12, text="⌂ End (0,0)", fill="#00e5ff", font=("Segoe UI", 8, "bold"))
 
         # 3. Разомкнутые технологические резы (обрезка листа)
         for cut in p.open_contours:
