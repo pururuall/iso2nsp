@@ -79,6 +79,60 @@ class Iso2NspApp(tk.Tk):
             return self.project.plates[self.current_plate_idx]
         return None
 
+    def _create_round_btn_image(self, width=17, height=17, radius=4, fill='#444444', border='#333333'):
+        """Генерирует 9-patch PhotoImage со скругленными углами в стиле Blender 3D."""
+        img = tk.PhotoImage(width=width, height=height)
+        rows = []
+        transparent_coords = []
+        for y in range(height):
+            row = []
+            for x in range(width):
+                cx = radius if x < radius else (width - 1 - radius if x >= width - 1 - radius else x)
+                cy = radius if y < radius else (height - 1 - radius if y >= height - 1 - radius else y)
+                dist = math.hypot(x - cx, y - cy)
+                if dist > radius + 0.35:
+                    row.append(fill)
+                    transparent_coords.append((x, y))
+                elif dist > radius - 0.65:
+                    row.append(border)
+                else:
+                    row.append(fill)
+            rows.append('{' + ' '.join(row) + '}')
+        img.put(' '.join(rows))
+        for tx, ty in transparent_coords:
+            img.transparency_set(tx, ty, True)
+        return img
+
+    def _register_rounded_btn_style(self, style_name, normal_fill, normal_border,
+                                    hover_fill, hover_border,
+                                    pressed_fill, pressed_border,
+                                    disabled_fill='#2b2b2b', disabled_border='#242424',
+                                    fg='#e6e6e6', font=("Segoe UI", 9), padding=4, radius=4):
+        """Регистрирует стиль ttk.Button со скругленными углами (9-slice) и состояниями (Blender-кнопка)."""
+        img_n = self._create_round_btn_image(width=17, height=17, radius=radius, fill=normal_fill, border=normal_border)
+        img_h = self._create_round_btn_image(width=17, height=17, radius=radius, fill=hover_fill, border=hover_border)
+        img_p = self._create_round_btn_image(width=17, height=17, radius=radius, fill=pressed_fill, border=pressed_border)
+        img_d = self._create_round_btn_image(width=17, height=17, radius=radius, fill=disabled_fill, border=disabled_border)
+        self._style_images.extend([img_n, img_h, img_p, img_d])
+
+        elem_name = f"{style_name}.round_border"
+        self.style.element_create(
+            elem_name, "image", img_n,
+            ("disabled", img_d),
+            ("pressed", img_p),
+            ("active", img_h),
+            border=5, sticky="nsew"
+        )
+        self.style.layout(style_name, [
+            (elem_name, {"sticky": "nswe", "children": [
+                ("Button.padding", {"sticky": "nswe", "children": [
+                    ("Button.label", {"sticky": "nswe"})
+                ]})
+            ]})
+        ])
+        self.style.configure(style_name, foreground=fg, font=font, padding=padding)
+        self.style.map(style_name, foreground=[("disabled", "#666666")])
+
     def _setup_style(self):
         self.configure(bg="#1e1e1e")
         self.style = ttk.Style(self)
@@ -98,25 +152,22 @@ class Iso2NspApp(tk.Tk):
         self.style.configure("Header.TLabel", font=("Segoe UI", 11, "bold"), foreground=self.accent_color)
         self.style.configure("Sub.TLabel", font=("Segoe UI", 8), foreground=self.text_muted)
 
-        # Стандартные кнопки Blender (плоский серо-графитовый с аккуратным ховером)
-        self.style.configure("TButton", background=self.btn_bg, foreground=self.text_color, borderwidth=1, relief="flat", padding=4)
-        self.style.map("TButton", background=[("active", "#545454"), ("pressed", "#333333")], relief=[("pressed", "sunken")])
+        self._style_images = []
 
-        # Акцентная кнопка Blender (Фирменный оранжевый)
-        self.style.configure("Accent.TButton", background="#ea7600", foreground="#ffffff", font=("Segoe UI", 9, "bold"), borderwidth=1, relief="flat", padding=5)
-        self.style.map("Accent.TButton", background=[("active", "#f5881f"), ("pressed", "#c46300")])
+        # Стандартные кнопки Blender (скругление r=4, графитово-серый с мягким ховером)
+        self._register_rounded_btn_style("TButton", "#444444", "#333333", "#545454", "#444444", "#333333", "#222222", padding=4, radius=4)
 
-        # Кнопка сохранения проекта (Blender синий / стальной)
-        self.style.configure("Success.TButton", background="#3a6ea5", foreground="#ffffff", font=("Segoe UI", 10, "bold"), borderwidth=1, relief="flat", padding=7)
-        self.style.map("Success.TButton", background=[("active", "#4a7fb8"), ("pressed", "#2a5785")])
+        # Акцентная кнопка Blender (Фирменный оранжевый, r=4)
+        self._register_rounded_btn_style("Accent.TButton", "#ea7600", "#b35b00", "#f5881f", "#c46300", "#c46300", "#8f4800", fg="#ffffff", font=("Segoe UI", 9, "bold"), padding=5, radius=4)
 
-        # Кнопка экспорта отчета PDF (Blender приглушенный красный / терракот)
-        self.style.configure("Pdf.TButton", background="#993d3d", foreground="#ffffff", font=("Segoe UI", 9, "bold"), borderwidth=1, relief="flat", padding=6)
-        self.style.map("Pdf.TButton", background=[("active", "#b04747"), ("pressed", "#7a2e2e")])
+        # Кнопка сохранения проекта (Blender синий / стальной, r=4)
+        self._register_rounded_btn_style("Success.TButton", "#3a6ea5", "#2a527c", "#4a7fb8", "#336396", "#2a5785", "#1d4063", fg="#ffffff", font=("Segoe UI", 10, "bold"), padding=7, radius=4)
 
-        # Опасные действия (Удаление)
-        self.style.configure("Danger.TButton", background="#7a2e2e", foreground="#ffffff", padding=4)
-        self.style.map("Danger.TButton", background=[("active", "#993d3d"), ("pressed", "#5a1f1f")])
+        # Кнопка экспорта отчета PDF (Blender приглушенный красный / терракот, r=4)
+        self._register_rounded_btn_style("Pdf.TButton", "#993d3d", "#732d2d", "#b04747", "#8c3636", "#7a2e2e", "#5c2121", fg="#ffffff", font=("Segoe UI", 9, "bold"), padding=6, radius=4)
+
+        # Опасные действия (Удаление, r=4)
+        self._register_rounded_btn_style("Danger.TButton", "#7a2e2e", "#5c2121", "#993d3d", "#732d2d", "#5a1f1f", "#3d1414", fg="#ffffff", padding=4, radius=4)
 
         # Поля ввода в стиле Blender (темная утопленная область)
         self.style.configure("TEntry", fieldbackground="#161616", foreground="#ffffff")
