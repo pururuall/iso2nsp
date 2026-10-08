@@ -21,7 +21,7 @@ from iso2nsp import (
     PlateData, NestingProject, parts_match_rotation, sort_parts_from_bottom_left
 )
 
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.4.1"
 IS_TEST_VERSION = "test" in APP_VERSION.lower()
 
 EMBEDDED_LICENSE_TEXT = """УСЛОВИЯ ИСПОЛЬЗОВАНИЯ И ОТКАЗ ОТ ОТВЕТСТВЕННОСТИ (LICENSE)
@@ -80,50 +80,60 @@ class Iso2NspApp(tk.Tk):
         return None
 
     def _setup_style(self):
-        self.configure(bg="#16181f")
+        self.configure(bg="#1e1e1e")
         self.style = ttk.Style(self)
         self.style.theme_use('clam')
 
-        self.bg_color = "#16181f"
-        self.panel_bg = "#21242e"
-        self.accent_color = "#00e5ff"
-        self.btn_bg = "#2b303d"
-        self.text_color = "#e6edf3"
+        # Цветовая палитра в стилистике Blender 3D (Dark Theme)
+        self.bg_color = "#1e1e1e"        # Основной фон окна (Blender interface base)
+        self.panel_bg = "#282828"        # Панели и боковые сайдбары (Blender properties region)
+        self.accent_color = "#ea7600"     # Фирменный оранжевый акцент Blender (Active tool / selection)
+        self.accent_blue = "#4772b3"      # Вторичный синий акцент Blender (Selection highlight)
+        self.btn_bg = "#444444"          # Кнопки по умолчанию (Blender button gray)
+        self.text_color = "#e6e6e6"      # Основной текст (Blender clean soft white)
+        self.text_muted = "#999999"      # Второстепенные надписи (Blender subtitle gray)
 
         self.style.configure(".", background=self.panel_bg, foreground=self.text_color, font=("Segoe UI", 9))
         self.style.configure("TLabel", background=self.panel_bg, foreground=self.text_color)
         self.style.configure("Header.TLabel", font=("Segoe UI", 11, "bold"), foreground=self.accent_color)
-        self.style.configure("Sub.TLabel", font=("Segoe UI", 8), foreground="#8b949e")
+        self.style.configure("Sub.TLabel", font=("Segoe UI", 8), foreground=self.text_muted)
 
-        self.style.configure("TButton", background=self.btn_bg, foreground=self.text_color, borderwidth=0, padding=4)
-        self.style.map("TButton", background=[("active", "#383f50"), ("pressed", "#444c60")])
+        # Стандартные кнопки Blender (плоский серо-графитовый с аккуратным ховером)
+        self.style.configure("TButton", background=self.btn_bg, foreground=self.text_color, borderwidth=1, relief="flat", padding=4)
+        self.style.map("TButton", background=[("active", "#545454"), ("pressed", "#333333")], relief=[("pressed", "sunken")])
 
-        self.style.configure("Accent.TButton", background="#007acc", foreground="#ffffff", font=("Segoe UI", 9, "bold"), padding=5)
-        self.style.map("Accent.TButton", background=[("active", "#0098ff"), ("pressed", "#005999")])
+        # Акцентная кнопка Blender (Фирменный оранжевый)
+        self.style.configure("Accent.TButton", background="#ea7600", foreground="#ffffff", font=("Segoe UI", 9, "bold"), borderwidth=1, relief="flat", padding=5)
+        self.style.map("Accent.TButton", background=[("active", "#f5881f"), ("pressed", "#c46300")])
 
-        self.style.configure("Success.TButton", background="#238636", foreground="#ffffff", font=("Segoe UI", 10, "bold"), padding=7)
-        self.style.map("Success.TButton", background=[("active", "#2ea043"), ("pressed", "#1b5e20")])
+        # Кнопка сохранения проекта (Blender синий / стальной)
+        self.style.configure("Success.TButton", background="#3a6ea5", foreground="#ffffff", font=("Segoe UI", 10, "bold"), borderwidth=1, relief="flat", padding=7)
+        self.style.map("Success.TButton", background=[("active", "#4a7fb8"), ("pressed", "#2a5785")])
 
-        self.style.configure("Pdf.TButton", background="#c62828", foreground="#ffffff", font=("Segoe UI", 9, "bold"), padding=6)
-        self.style.map("Pdf.TButton", background=[("active", "#e53935"), ("pressed", "#8e0000")])
+        # Кнопка экспорта отчета PDF (Blender приглушенный красный / терракот)
+        self.style.configure("Pdf.TButton", background="#993d3d", foreground="#ffffff", font=("Segoe UI", 9, "bold"), borderwidth=1, relief="flat", padding=6)
+        self.style.map("Pdf.TButton", background=[("active", "#b04747"), ("pressed", "#7a2e2e")])
 
-        self.style.configure("Danger.TButton", background="#b32424", foreground="#ffffff", padding=4)
-        self.style.map("Danger.TButton", background=[("active", "#d32f2f"), ("pressed", "#8b1818")])
+        # Опасные действия (Удаление)
+        self.style.configure("Danger.TButton", background="#7a2e2e", foreground="#ffffff", padding=4)
+        self.style.map("Danger.TButton", background=[("active", "#993d3d"), ("pressed", "#5a1f1f")])
 
-        self.style.configure("TEntry", fieldbackground="#161922", foreground="#ffffff")
-        self.style.configure("TCheckbutton", background=self.panel_bg, foreground="#00e5ff", font=("Segoe UI", 8, "bold"))
+        # Поля ввода в стиле Blender (темная утопленная область)
+        self.style.configure("TEntry", fieldbackground="#161616", foreground="#ffffff")
+        self.style.configure("TCheckbutton", background=self.panel_bg, foreground=self.accent_color, font=("Segoe UI", 8, "bold"))
+        self.style.configure("TSeparator", background="#383838")
 
-        # Настройка Treeview
+        # Таблицы Treeview в стиле Blender Outliner
         self.style.configure(
             "Treeview",
-            background="#1a1d26",
-            foreground="#e6edf3",
-            fieldbackground="#1a1d26",
+            background="#202020",
+            foreground="#e6e6e6",
+            fieldbackground="#202020",
             rowheight=24,
             font=("Segoe UI", 9)
         )
-        self.style.configure("Treeview.Heading", background="#282c38", foreground="#00e5ff", font=("Segoe UI", 9, "bold"))
-        self.style.map("Treeview", background=[("selected", "#1f4068")])
+        self.style.configure("Treeview.Heading", background="#323232", foreground=self.accent_color, font=("Segoe UI", 9, "bold"))
+        self.style.map("Treeview", background=[("selected", "#3e5573")])
 
     def _create_layout(self):
         # Главный контейнер
@@ -200,8 +210,8 @@ class Iso2NspApp(tk.Tk):
         rep_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
         rep_frame.pack(fill=tk.X, pady=(0, 6))
         ttk.Label(rep_frame, text="Тираж выбранного листа (шт):").pack(side=tk.LEFT)
-        self.spin_repeat = tk.Spinbox(rep_frame, from_=1, to=9999, width=5, bg="#161922", fg="#ffffff",
-                                      buttonbackground=self.btn_bg, command=self.on_repeat_changed)
+        self.spin_repeat = tk.Spinbox(rep_frame, from_=1, to=9999, width=5, bg="#161616", fg="#ffffff",
+                                      buttonbackground=self.btn_bg, insertbackground="#ffffff", command=self.on_repeat_changed)
         self.spin_repeat.pack(side=tk.RIGHT)
         self.spin_repeat.bind("<Return>", lambda e: self.on_repeat_changed())
         self.spin_repeat.bind("<FocusOut>", lambda e: self.on_repeat_changed())
@@ -333,10 +343,10 @@ class Iso2NspApp(tk.Tk):
         self.tree_parts.bind("<Double-1>", lambda e: self.ent_rename.focus_set())
 
         # Блок быстрого переименования выбранной детали
-        rename_box = tk.LabelFrame(right_sidebar, text=" Переименование выбранной детали ", bg=self.panel_bg, fg="#00e5ff", padx=10, pady=8)
+        rename_box = tk.LabelFrame(right_sidebar, text=" Переименование выбранной детали ", bg=self.panel_bg, fg=self.accent_color, padx=10, pady=8)
         rename_box.pack(fill=tk.X, pady=(0, 4))
 
-        self.lbl_selected_info = ttk.Label(rename_box, text="Выберите деталь в таблице выше", foreground="#8b949e")
+        self.lbl_selected_info = ttk.Label(rename_box, text="Выберите деталь в таблице выше", foreground=self.text_muted)
         self.lbl_selected_info.pack(anchor="w", pady=(0, 4))
 
         edit_row = tk.Frame(rename_box, bg=self.panel_bg)
@@ -357,35 +367,35 @@ class Iso2NspApp(tk.Tk):
             right_sidebar,
             text="Использование ПО строго по условиям LICENSE (pururuall)",
             bg=self.panel_bg,
-            fg="#8b949e",
+            fg=self.text_muted,
             font=("Segoe UI", 8, "underline"),
             cursor="hand2"
         )
         self.lbl_lic.pack(side=tk.BOTTOM, anchor="e", pady=(6, 2))
         self.lbl_lic.bind("<Button-1>", lambda e: self.show_license_dialog())
-        self.lbl_lic.bind("<Enter>", lambda e: self.lbl_lic.configure(fg="#58a6ff"))
-        self.lbl_lic.bind("<Leave>", lambda e: self.lbl_lic.configure(fg="#8b949e"))
+        self.lbl_lic.bind("<Enter>", lambda e: self.lbl_lic.configure(fg=self.accent_color))
+        self.lbl_lic.bind("<Leave>", lambda e: self.lbl_lic.configure(fg=self.text_muted))
 
         # ======================================================================
-        # 3. ЦЕНТРАЛЬНАЯ ЧАСТЬ - 2D Холст (Canvas)
+        # 3. ЦЕНТРАЛЬНАЯ ЧАСТЬ - 2D Холст (Canvas в стиле Blender 3D Viewport)
         # ======================================================================
-        canvas_container = tk.Frame(main_frame, bg="#101216")
+        canvas_container = tk.Frame(main_frame, bg="#303030")
         canvas_container.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self.canvas = tk.Canvas(canvas_container, bg="#101216", highlightthickness=0)
+        self.canvas = tk.Canvas(canvas_container, bg="#303030", highlightthickness=0)
         self.canvas.pack(fill=tk.BOTH, expand=True)
 
         # Нижняя информационная строка
-        self.status_bar = tk.Frame(canvas_container, bg="#1b1e27", height=28, padx=10)
+        self.status_bar = tk.Frame(canvas_container, bg="#242424", height=28, padx=10)
         self.status_bar.pack(fill=tk.X, side=tk.BOTTOM)
 
-        self.lbl_coords = tk.Label(self.status_bar, text="X: 0.0 мм  |  Y: 0.0 мм", bg="#1b1e27", fg="#8892b0", font=("Consolas", 9))
+        self.lbl_coords = tk.Label(self.status_bar, text="X: 0.0 мм  |  Y: 0.0 мм", bg="#242424", fg="#b0b0b0", font=("Consolas", 9))
         self.lbl_coords.pack(side=tk.LEFT)
 
         self.lbl_legend = tk.Label(
             self.status_bar,
-            text="■ Лист (Голубой)   ■ Детали (Зеленый)   ■ Выбранная (Желтый)   ■ Отверстия (Синий)   ■ Обрезка (Красный - вкл / Пунктир - откл)",
-            bg="#1b1e27", fg="#a0aec0", font=("Segoe UI", 8)
+            text="■ Лист (Оранжевый)   ■ Детали (Графит)   ■ Выбранная (Blender Orange)   ■ Отверстия (Синий)   ■ Обрезка (Красный / Пунктир)",
+            bg="#242424", fg="#888888", font=("Segoe UI", 8)
         )
         self.lbl_legend.pack(side=tk.RIGHT)
 
@@ -835,7 +845,7 @@ class Iso2NspApp(tk.Tk):
         dlg.title("Лицензионные условия (LICENSE) — iso2nsp")
         dlg.geometry("660x540")
         dlg.minsize(500, 400)
-        dlg.configure(bg="#161922")
+        dlg.configure(bg="#222222")
         dlg.transient(self)
         dlg.grab_set()
 
@@ -850,21 +860,21 @@ class Iso2NspApp(tk.Tk):
             dlg,
             text="⚖ Условия использования и отказ от ответственности",
             font=("Segoe UI", 12, "bold"),
-            bg="#161922",
-            fg="#00e5ff",
+            bg="#222222",
+            fg=self.accent_color,
             pady=12
         )
         header.pack(fill=tk.X)
 
         # Текстовое поле с прокруткой
-        text_frame = tk.Frame(dlg, bg="#161922", padx=16, pady=4)
+        text_frame = tk.Frame(dlg, bg="#222222", padx=16, pady=4)
         text_frame.pack(fill=tk.BOTH, expand=True)
 
         txt_widget = tk.Text(
             text_frame,
             wrap=tk.WORD,
-            bg="#0d1117",
-            fg="#e6edf3",
+            bg="#161616",
+            fg="#e6e6e6",
             insertbackground="#ffffff",
             font=("Segoe UI", 10),
             padx=12,
@@ -872,7 +882,7 @@ class Iso2NspApp(tk.Tk):
             relief=tk.FLAT,
             borderwidth=1,
             highlightthickness=1,
-            highlightbackground="#30363d"
+            highlightbackground="#3d3d3d"
         )
         scroll = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=txt_widget.yview)
         txt_widget.configure(yscrollcommand=scroll.set)
@@ -884,10 +894,10 @@ class Iso2NspApp(tk.Tk):
         txt_widget.configure(state=tk.DISABLED)
 
         # Нижняя панель с кнопкой закрытия
-        btn_frame = tk.Frame(dlg, bg="#161922", pady=12)
+        btn_frame = tk.Frame(dlg, bg="#222222", pady=12)
         btn_frame.pack(fill=tk.X)
 
-        btn_close = ttk.Button(btn_frame, text="Закрыть", command=dlg.destroy)
+        btn_close = ttk.Button(btn_frame, text="Закрыть", style="Accent.TButton", command=dlg.destroy)
         btn_close.pack(side=tk.RIGHT, padx=16)
         btn_close.focus_set()
 
@@ -998,7 +1008,7 @@ class Iso2NspApp(tk.Tk):
             group = self.master_groups[idx]
             self.selected_group_key = group['key']
             info_text = f"Деталь #{idx+1}: {group['width']:.1f} x {group['height']:.1f} мм ({len(group['instances'])} шт.)"
-            self.lbl_selected_info.config(text=info_text, foreground="#00e5ff")
+            self.lbl_selected_info.config(text=info_text, foreground=self.accent_color)
 
             self.ent_rename.delete(0, tk.END)
             self.ent_rename.insert(0, group['name'])
@@ -1182,45 +1192,45 @@ class Iso2NspApp(tk.Tk):
             self.canvas.create_text(
                 self.canvas.winfo_width() / 2, self.canvas.winfo_height() / 2,
                 text="Нажмите '+ Добавить файлы...' для загрузки программ ЧПУ",
-                fill="#4a5568", font=("Segoe UI", 13, "bold")
+                fill="#777777", font=("Segoe UI", 13, "bold")
             )
             return
 
         sw = p.sheet_width
         sh = p.sheet_height
 
-        # 1. Граница и фон листа
+        # 1. Граница и фон листа (Blender dark workspace)
         p1 = self.to_screen(0, 0)
         p2 = self.to_screen(sw, sh)
         sx1, sy2 = p1
         sx2, sy1 = p2
 
-        self.canvas.create_rectangle(sx1, sy1, sx2, sy2, fill="#1c202a", outline="#00e5ff", width=2, dash=(6, 4))
+        self.canvas.create_rectangle(sx1, sy1, sx2, sy2, fill="#222222", outline=self.accent_color, width=2, dash=(6, 4))
 
-        # Сетка шагом 100 / 500 мм
+        # Сетка шагом 100 / 500 мм (Blender viewport grid)
         grid_step = 500.0 if self.zoom_scale < 0.35 else 100.0
         gx = grid_step
         while gx < sw:
             lx1, ly1 = self.to_screen(gx, 0)
             lx2, ly2 = self.to_screen(gx, sh)
-            self.canvas.create_line(lx1, ly1, lx2, ly2, fill="#252a37", width=1)
+            self.canvas.create_line(lx1, ly1, lx2, ly2, fill="#333333", width=1)
             gx += grid_step
 
         gy = grid_step
         while gy < sh:
             lx1, ly1 = self.to_screen(0, gy)
             lx2, ly2 = self.to_screen(sw, gy)
-            self.canvas.create_line(lx1, ly1, lx2, ly2, fill="#252a37", width=1)
+            self.canvas.create_line(lx1, ly1, lx2, ly2, fill="#333333", width=1)
             gy += grid_step
 
-        # Текст габаритов листа и тиража
+        # Текст габаритов листа и тиража (Blender Orange)
         info_text = f"Лист {self.current_plate_idx + 1}/{len(self.project.plates)}: {p.plate_name}  |  {sw:.0f} x {sh:.0f} x {p.thickness:.1f} мм ({p.material})  |  Тираж: {p.repeat_count} шт."
         self.canvas.create_text(
             sx1 + 8, sy1 + 14, text=info_text,
-            anchor="w", fill="#00e5ff", font=("Segoe UI", 9, "bold")
+            anchor="w", fill=self.accent_color, font=("Segoe UI", 9, "bold")
         )
 
-        # 2. Отрисовка деталей
+        # 2. Отрисовка деталей (Blender solid shading / active orange wireframe)
         selected_instances = set()
         if 0 <= self.selected_group_idx < len(self.master_groups):
             selected_instances = set(self.master_groups[self.selected_group_idx]['instances'])
@@ -1229,12 +1239,12 @@ class Iso2NspApp(tk.Tk):
             is_selected = (part in selected_instances)
 
             if is_selected:
-                fill_color = "#4d3d14"
-                outline_color = "#ffd700"
+                fill_color = "#5c3814"      # Теплый оранжевый оттенок Blender для выбранной детали
+                outline_color = "#ea7600"   # Свечение Blender Orange для активного объекта
                 outline_width = 2.5
             else:
-                fill_color = "#1d382d"
-                outline_color = "#00e676"
+                fill_color = "#3a4049"      # Графитово-стальной оттенок Blender Solid / Clay
+                outline_color = "#8b9cb0"   # Четкий серебристо-стальной контур
                 outline_width = 1.2
 
             pts = part.outer_contour.get_discrete_points()
@@ -1251,10 +1261,10 @@ class Iso2NspApp(tk.Tk):
                 for hx, hy in hpts:
                     h_screen.extend(self.to_screen(hx, hy))
                 if len(h_screen) >= 6:
-                    hole_outline = "#ffea00" if is_selected else "#2979ff"
-                    self.canvas.create_polygon(h_screen, fill="#1c202a", outline=hole_outline, width=1.2)
+                    hole_outline = "#ea7600" if is_selected else "#4772b3"
+                    self.canvas.create_polygon(h_screen, fill="#222222", outline=hole_outline, width=1.2)
 
-        # Маркер первой детали (точка станка / старт резки)
+        # Маркер первой детали (точка станка / старт резки - Blender Orange)
         if p.parts:
             first_pt = p.parts[0]
             fbx = first_pt.bbox()
@@ -1264,30 +1274,30 @@ class Iso2NspApp(tk.Tk):
             self.canvas.create_text(
                 fsx, fsy,
                 text="▶ Старт #1",
-                fill="#00e5ff",
+                fill=self.accent_color,
                 font=("Segoe UI", 9, "bold")
             )
 
-        # Обозначение физических упоров станка (зеленые штрихи на X=0 и Y=0)
+        # Обозначение физических упоров станка (зеленые штрихи Blender оси на X=0 и Y=0)
         stop_len = 10
         for stop_y in range(100, int(sh), 200):
             sx0, sy0 = self.to_screen(0, stop_y)
-            self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
+            self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#5cb85c", width=2)
         for stop_x in range(100, int(sw), 200):
             sx0, sy0 = self.to_screen(stop_x, 0)
-            self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
+            self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#5cb85c", width=2)
 
         # Текстовые метки упоров
         u_lx, u_ly = self.to_screen(0, sh / 2)
-        self.canvas.create_text(u_lx - 16, u_ly, text="◀ Упор X=0", fill="#76ff03", font=("Segoe UI", 8, "bold"), angle=90)
+        self.canvas.create_text(u_lx - 16, u_ly, text="◀ Упор X=0", fill="#5cb85c", font=("Segoe UI", 8, "bold"), angle=90)
         u_bx, u_by = self.to_screen(sw / 2, 0)
-        self.canvas.create_text(u_bx, u_by + 16, text="▼ Упор Y=0", fill="#76ff03", font=("Segoe UI", 8, "bold"))
+        self.canvas.create_text(u_bx, u_by + 16, text="▼ Упор Y=0", fill="#5cb85c", font=("Segoe UI", 8, "bold"))
 
-        # Обозначение команды возврата станка в нули (End 0;0)
+        # Обозначение команды возврата станка в нули (End 0;0 - Blender Orange)
         if getattr(p, 'return_to_zero', False):
             z_sx, z_sy = self.to_screen(0, 0)
-            self.canvas.create_oval(z_sx - 6, z_sy - 6, z_sx + 6, z_sy + 6, fill="#00e5ff", outline="#ffffff", width=1.5)
-            self.canvas.create_text(z_sx + 36, z_sy - 12, text="⌂ End (0,0)", fill="#00e5ff", font=("Segoe UI", 8, "bold"))
+            self.canvas.create_oval(z_sx - 6, z_sy - 6, z_sx + 6, z_sy + 6, fill=self.accent_color, outline="#ffffff", width=1.5)
+            self.canvas.create_text(z_sx + 36, z_sy - 12, text="⌂ End (0,0)", fill=self.accent_color, font=("Segoe UI", 8, "bold"))
 
         # 3. Разомкнутые технологические резы (обрезка листа)
         for cut in p.open_contours:
@@ -1295,7 +1305,7 @@ class Iso2NspApp(tk.Tk):
             if not cpts:
                 continue
             is_inc = getattr(p, 'include_cutoff', False)
-            line_color = "#ff1744" if is_inc else "#6e7681"
+            line_color = "#e05353" if is_inc else "#555555"
             line_dash = () if is_inc else (6, 4)
             line_w = 2 if is_inc else 1.5
 
@@ -1311,7 +1321,7 @@ class Iso2NspApp(tk.Tk):
                 self.canvas.create_text(
                     sx, sy - 8,
                     text="✂ Обрезка (откл.)",
-                    fill="#8b949e",
+                    fill=self.text_muted,
                     font=("Segoe UI", 8, "italic")
                 )
 
