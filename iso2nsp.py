@@ -566,7 +566,8 @@ class PlateData:
     def __init__(self, file_path: str, plate_name: str = "",
                  sheet_width: float = 1500.0, sheet_height: float = 3000.0,
                  thickness: float = 6.0, material: str = "FE",
-                 repeat_count: int = 1, include_cutoff: bool = False):
+                 repeat_count: int = 1, include_cutoff: bool = False,
+                 return_to_zero: bool = False):
         self.file_path = file_path
         self.plate_name = plate_name or (os.path.splitext(os.path.basename(file_path))[0] if file_path else "Plate")
         self.sheet_width = sheet_width
@@ -575,6 +576,7 @@ class PlateData:
         self.material = material
         self.repeat_count = max(1, int(repeat_count))
         self.include_cutoff = include_cutoff  # По умолчанию False: обрезка листа не переносится в NSP
+        self.return_to_zero = return_to_zero  # Возврат станка в (0, 0) после завершения листа
         self.guid = str(uuid.uuid4())
 
         # Исходные контуры (в координатах станка)
@@ -619,6 +621,7 @@ class NestingProject:
         self.job_name = job_name
         self.plates = []  # list[PlateData]
         self.custom_names = {}  # geom_key -> custom_name
+        self.return_to_zero = False  # Возврат станка в (0, 0) после завершения листа
 
     def add_plate(self, plate: PlateData):
         self.plates.append(plate)
@@ -775,7 +778,12 @@ class NestingProject:
             'NormalMaterial': project_material
         })
 
-        ET.SubElement(root, 'StopPos', {'x': '10', 'y': '10'})
+        # Команда парковки/возврата станка после завершения резки
+        has_end_zero = self.return_to_zero or any(getattr(p, 'return_to_zero', False) for p in self.plates)
+        if has_end_zero:
+            ET.SubElement(root, 'StopPos', {'x': '0', 'y': '0'})
+        else:
+            ET.SubElement(root, 'StopPos')
         ET.SubElement(root, 'NestParam', {
             'MinComnEdgeLen': '1',
             'NestCombType': '1',
@@ -923,7 +931,7 @@ def convert_iso_to_nsp(input_paths, output_path: str,
                        flip_x=False, flip_y=False,
                        sheet_size=None, thickness=None, material=None,
                        repeats=None, pdf_output=None,
-                       include_cutoff=False, lantek_pdfs=None):
+                       include_cutoff=False, return_to_zero=False, lantek_pdfs=None):
     """
     Пайплайн конвертации одного или нескольких ISO/CNC файлов в проект CypNest .nsp
     """
@@ -938,6 +946,7 @@ def convert_iso_to_nsp(input_paths, output_path: str,
         pdf_list.extend(lantek_pdfs)
 
     project = NestingProject(job_name=job_name or "")
+    project.return_to_zero = return_to_zero
 
     for idx, path in enumerate(cnc_paths):
         parser = IsoParser(path)
@@ -976,7 +985,8 @@ def convert_iso_to_nsp(input_paths, output_path: str,
             thickness=th,
             material=mat,
             repeat_count=rep,
-            include_cutoff=include_cutoff
+            include_cutoff=include_cutoff,
+            return_to_zero=return_to_zero
         )
         plate.raw_closed_contours = parser.closed_contours
         plate.raw_open_contours = parser.open_contours
@@ -1056,6 +1066,7 @@ def main():
     arg_parser.add_argument("--material", help="Марка материала (например: FE, SS, AL)")
     arg_parser.add_argument("--pdf", nargs="?", const="auto", help="Сформировать производственный PDF-отчет (стиль Lantek CAM)")
     arg_parser.add_argument("--include-cutoff", action="store_true", help="Включить перенос линий обрезки листа в NSP (по умолчанию: отключено)")
+    arg_parser.add_argument("--end-zero", action="store_true", help="Команда возврата станка к нулевым координатам (0, 0) после завершения листа")
     arg_parser.add_argument("--lantek-pdf", nargs="*", help="Файлы отчетов Lantek PDF для автоматического назначения имен и тиражей")
 
     args = arg_parser.parse_args()
@@ -1090,6 +1101,7 @@ def main():
         repeats=args.repeats,
         pdf_output=pdf_out,
         include_cutoff=args.include_cutoff,
+        return_to_zero=args.end_zero,
         lantek_pdfs=args.lantek_pdf
     )
 

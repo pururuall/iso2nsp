@@ -22,13 +22,35 @@ from iso2nsp import (
 )
 
 APP_VERSION = "2.4.0-test"
+IS_TEST_VERSION = "test" in APP_VERSION.lower()
+
+EMBEDDED_LICENSE_TEXT = """УСЛОВИЯ ИСПОЛЬЗОВАНИЯ И ОТКАЗ ОТ ОТВЕТСТВЕННОСТИ (LICENSE)
+
+1. ОГРАНИЧЕНИЕ ПРАВ ИСПОЛЬЗОВАНИЯ
+1.1. Настоящее программное обеспечение (далее — "Программа") создано исключительно в личных целях Разработчика (автора).
+1.2. Использование Программы третьими лицами, любыми сотрудниками компании, а также любыми другими юридическими и физическими лицами в коммерческих или производственных целях КАТЕГОРИЧЕСКИ ЗАПРЕЩЕНО без явного письменного согласия автора.
+1.3. Автор оставляет за собой исключительное и безусловное право в любой момент запретить использование Программы компании или любым третьим лицам. В случае получения устного или письменного требования автора о прекращении использования, компания и любые третьи лица обязаны незамедлительно прекратить эксплуатацию Программы и удалить все её копии. Дальнейшее использование Программы после такого требования является незаконным.
+
+2. ПОЛНЫЙ ОТКАЗ ОТ ОТВЕТСТВЕННОСТИ
+2.1. Программа предоставляется на условиях "КАК ЕСТЬ" ("AS IS"). Автор не предоставляет никаких гарантий относительно точности, надежности, производительности или пригодности Программы для каких-либо производственных или коммерческих задач.
+2.2. Автор НЕ НЕСЕТ ОТВЕТСТВЕННОСТИ за любые прямые, косвенные, случайные или сопутствующие убытки, возникшие в результате использования или невозможности использования Программы.
+2.3. Автор не несет ответственности за:
+   - Сбои в производственных процессах;
+   - Увеличение объемов брака, дефектов или порчу материалов/оборудования;
+   - Финансовые потери, упущенную выгоду или любые иные негативные результаты работы Программы.
+2.4. Все риски, связанные с качеством и производительностью Программы, принимают на себя лица или организации, решившие запустить её вопреки запрету, указанному в п. 1.2.
+
+Автор Программы: Мурзянов Виталий Олегович (pururuall)
+Дата: 06 октября 2026 года
+"""
 
 
 class Iso2NspApp(tk.Tk):
     def __init__(self):
         super().__init__()
 
-        self.title(f"iso2nsp v{APP_VERSION} [ТЕСТОВАЯ ВЕРСИЯ] — Конвертер раскроя ISO -> CypNest .nsp")
+        title_suffix = " [ТЕСТОВАЯ ВЕРСИЯ]" if IS_TEST_VERSION else ""
+        self.title(f"iso2nsp v{APP_VERSION}{title_suffix} — Конвертер раскроя ISO -> CypNest .nsp")
         self.geometry("1440x880")
         self.minsize(1120, 700)
 
@@ -249,11 +271,21 @@ class Iso2NspApp(tk.Tk):
         align_frame2 = tk.Frame(left_sidebar, bg=self.panel_bg)
         align_frame2.pack(fill=tk.X, pady=2)
         ttk.Button(align_frame2, text="⊡ Центрировать", width=12, command=self.on_center_sheet).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
-        ttk.Button(align_frame2, text="⚡ Резка от упоров", width=12, command=self.on_sort_bottom_left).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+        if IS_TEST_VERSION:
+            ttk.Button(align_frame2, text="⚡ Резка от упоров", width=12, command=self.on_sort_bottom_left).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
 
         # Быстрое переключение технологической обрезки листа
         self.btn_toggle_cutoff = ttk.Button(left_sidebar, text="✂ Обрезка: отсутствует", command=self.on_toggle_cutoff)
         self.btn_toggle_cutoff.pack(fill=tk.X, pady=(3, 2))
+
+        if IS_TEST_VERSION:
+            # Переключение команды возврата станка к нулевым координатам (End 0;0)
+            self.btn_toggle_end_zero = ttk.Button(
+                left_sidebar,
+                text="⌂ End 0;0: ВЫКЛ (возврат в ноль)",
+                command=self.on_toggle_end_zero
+            )
+            self.btn_toggle_end_zero.pack(fill=tk.X, pady=(2, 2))
 
         ttk.Separator(left_sidebar, orient="horizontal").pack(fill=tk.X, pady=6)
 
@@ -322,15 +354,19 @@ class Iso2NspApp(tk.Tk):
         btn_reset_names = ttk.Button(rename_box, text="Сбросить имена к стандартным", command=self.on_reset_all_names)
         btn_reset_names.pack(fill=tk.X, pady=(6, 0))
 
-        # Едва заметная правовая маркировка об условиях использования (внизу справа)
-        lbl_lic = tk.Label(
+        # Правовая маркировка об условиях использования (внизу справа)
+        self.lbl_lic = tk.Label(
             right_sidebar,
             text="Использование ПО строго по условиям LICENSE (pururuall)",
             bg=self.panel_bg,
-            fg="#2c303c",
-            font=("Segoe UI", 7)
+            fg="#8b949e",
+            font=("Segoe UI", 8, "underline"),
+            cursor="hand2"
         )
-        lbl_lic.pack(side=tk.BOTTOM, anchor="e", pady=(4, 0))
+        self.lbl_lic.pack(side=tk.BOTTOM, anchor="e", pady=(6, 2))
+        self.lbl_lic.bind("<Button-1>", lambda e: self.show_license_dialog())
+        self.lbl_lic.bind("<Enter>", lambda e: self.lbl_lic.configure(fg="#58a6ff"))
+        self.lbl_lic.bind("<Leave>", lambda e: self.lbl_lic.configure(fg="#8b949e"))
 
         # ======================================================================
         # 3. ЦЕНТРАЛЬНАЯ ЧАСТЬ - 2D Холст (Canvas)
@@ -590,6 +626,7 @@ class Iso2NspApp(tk.Tk):
             self.selected_group_key = None
             self._refresh_parts_table()
             self.update_cutoff_button_ui()
+            self.update_end_zero_button_ui()
             self.render()
             return
 
@@ -609,6 +646,7 @@ class Iso2NspApp(tk.Tk):
         self._update_master_groups_for_active_plate()
         self._refresh_parts_table()
         self.update_cutoff_button_ui()
+        self.update_end_zero_button_ui()
         self.render()
 
     def on_apply_sheet_params(self):
@@ -749,6 +787,113 @@ class Iso2NspApp(tk.Tk):
             self.btn_toggle_cutoff.config(text="✂ Обрезка: ВКЛ (пойдет в NSP)", state=tk.NORMAL)
         else:
             self.btn_toggle_cutoff.config(text="✂ Обрезка: ВЫКЛ (в NSP не идет)", state=tk.NORMAL)
+
+    def on_toggle_end_zero(self):
+        """Переключение команды возврата станка к нулевым координатам (End 0;0) после завершения резки"""
+        p = self.active_plate
+        if not p:
+            return
+        new_val = not getattr(p, 'return_to_zero', False)
+        for pl in self._get_target_plates():
+            pl.return_to_zero = new_val
+        self.project.return_to_zero = new_val
+        self.update_end_zero_button_ui()
+        self.render()
+
+    def update_end_zero_button_ui(self):
+        if not hasattr(self, 'btn_toggle_end_zero'):
+            return
+        p = self.active_plate
+        if not p:
+            self.btn_toggle_end_zero.config(text="⌂ End 0;0: ВЫКЛ (возврат)", state=tk.DISABLED)
+        elif getattr(p, 'return_to_zero', False):
+            self.btn_toggle_end_zero.config(text="⌂ End 0;0: ВКЛ (возврат в 0, 0)", state=tk.NORMAL)
+        else:
+            self.btn_toggle_end_zero.config(text="⌂ End 0;0: ВЫКЛ (возврат в ноль)", state=tk.NORMAL)
+
+    def show_license_dialog(self):
+        """Отображение модального окна с полным текстом условий лицензии (LICENSE)"""
+        license_text = ""
+        candidate_paths = [
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), "LICENSE.txt"),
+            os.path.join(os.getcwd(), "LICENSE.txt"),
+        ]
+        if hasattr(sys, '_MEIPASS'):
+            candidate_paths.insert(0, os.path.join(sys._MEIPASS, "LICENSE.txt"))
+
+        for path in candidate_paths:
+            if os.path.isfile(path):
+                try:
+                    with open(path, "r", encoding="utf-8") as f:
+                        license_text = f.read()
+                    break
+                except Exception:
+                    pass
+
+        if not license_text:
+            license_text = EMBEDDED_LICENSE_TEXT
+
+        dlg = tk.Toplevel(self)
+        dlg.title("Лицензионные условия (LICENSE) — iso2nsp")
+        dlg.geometry("660x540")
+        dlg.minsize(500, 400)
+        dlg.configure(bg="#161922")
+        dlg.transient(self)
+        dlg.grab_set()
+
+        # Центрирование окна
+        dlg.update_idletasks()
+        rx = self.winfo_x() + max(0, (self.winfo_width() - 660) // 2)
+        ry = self.winfo_y() + max(0, (self.winfo_height() - 540) // 2)
+        dlg.geometry(f"660x540+{rx}+{ry}")
+
+        # Заголовок
+        header = tk.Label(
+            dlg,
+            text="⚖ Условия использования и отказ от ответственности",
+            font=("Segoe UI", 12, "bold"),
+            bg="#161922",
+            fg="#00e5ff",
+            pady=12
+        )
+        header.pack(fill=tk.X)
+
+        # Текстовое поле с прокруткой
+        text_frame = tk.Frame(dlg, bg="#161922", padx=16, pady=4)
+        text_frame.pack(fill=tk.BOTH, expand=True)
+
+        txt_widget = tk.Text(
+            text_frame,
+            wrap=tk.WORD,
+            bg="#0d1117",
+            fg="#e6edf3",
+            insertbackground="#ffffff",
+            font=("Segoe UI", 10),
+            padx=12,
+            pady=12,
+            relief=tk.FLAT,
+            borderwidth=1,
+            highlightthickness=1,
+            highlightbackground="#30363d"
+        )
+        scroll = ttk.Scrollbar(text_frame, orient=tk.VERTICAL, command=txt_widget.yview)
+        txt_widget.configure(yscrollcommand=scroll.set)
+
+        txt_widget.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scroll.pack(side=tk.RIGHT, fill=tk.Y)
+
+        txt_widget.insert(tk.END, license_text.strip())
+        txt_widget.configure(state=tk.DISABLED)
+
+        # Нижняя панель с кнопкой закрытия
+        btn_frame = tk.Frame(dlg, bg="#161922", pady=12)
+        btn_frame.pack(fill=tk.X)
+
+        btn_close = ttk.Button(btn_frame, text="Закрыть", command=dlg.destroy)
+        btn_close.pack(side=tk.RIGHT, padx=16)
+        btn_close.focus_set()
+
+        dlg.bind("<Escape>", lambda e: dlg.destroy())
 
     # ==========================================================================
     # ТАБЛИЦА И ПЕРЕИМЕНОВАНИЕ ДЕТАЛЕЙ
@@ -1111,34 +1256,41 @@ class Iso2NspApp(tk.Tk):
                     hole_outline = "#ffea00" if is_selected else "#2979ff"
                     self.canvas.create_polygon(h_screen, fill="#1c202a", outline=hole_outline, width=1.2)
 
-        # Маркер первой детали (точка станка / старт резки)
-        if p.parts:
-            first_pt = p.parts[0]
-            fbx = first_pt.bbox()
-            fcx = (fbx[0] + fbx[2]) / 2.0
-            fcy = (fbx[1] + fbx[3]) / 2.0
-            fsx, fsy = self.to_screen(fcx, fcy)
-            self.canvas.create_text(
-                fsx, fsy,
-                text="▶ Старт #1",
-                fill="#00e5ff",
-                font=("Segoe UI", 9, "bold")
-            )
+        if IS_TEST_VERSION:
+            # Маркер первой детали (точка станка / старт резки)
+            if p.parts:
+                first_pt = p.parts[0]
+                fbx = first_pt.bbox()
+                fcx = (fbx[0] + fbx[2]) / 2.0
+                fcy = (fbx[1] + fbx[3]) / 2.0
+                fsx, fsy = self.to_screen(fcx, fcy)
+                self.canvas.create_text(
+                    fsx, fsy,
+                    text="▶ Старт #1",
+                    fill="#00e5ff",
+                    font=("Segoe UI", 9, "bold")
+                )
 
-        # Обозначение физических упоров станка (зеленые штрихи на X=0 и Y=0)
-        stop_len = 10
-        for stop_y in range(100, int(sh), 200):
-            sx0, sy0 = self.to_screen(0, stop_y)
-            self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
-        for stop_x in range(100, int(sw), 200):
-            sx0, sy0 = self.to_screen(stop_x, 0)
-            self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
+            # Обозначение физических упоров станка (зеленые штрихи на X=0 и Y=0)
+            stop_len = 10
+            for stop_y in range(100, int(sh), 200):
+                sx0, sy0 = self.to_screen(0, stop_y)
+                self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
+            for stop_x in range(100, int(sw), 200):
+                sx0, sy0 = self.to_screen(stop_x, 0)
+                self.canvas.create_line(sx0, sy0, sx0 - stop_len, sy0 + stop_len, fill="#76ff03", width=2)
 
-        # Текстовые метки упоров
-        u_lx, u_ly = self.to_screen(0, sh / 2)
-        self.canvas.create_text(u_lx - 16, u_ly, text="◀ Упор X=0", fill="#76ff03", font=("Segoe UI", 8, "bold"), angle=90)
-        u_bx, u_by = self.to_screen(sw / 2, 0)
-        self.canvas.create_text(u_bx, u_by + 16, text="▼ Упор Y=0", fill="#76ff03", font=("Segoe UI", 8, "bold"))
+            # Текстовые метки упоров
+            u_lx, u_ly = self.to_screen(0, sh / 2)
+            self.canvas.create_text(u_lx - 16, u_ly, text="◀ Упор X=0", fill="#76ff03", font=("Segoe UI", 8, "bold"), angle=90)
+            u_bx, u_by = self.to_screen(sw / 2, 0)
+            self.canvas.create_text(u_bx, u_by + 16, text="▼ Упор Y=0", fill="#76ff03", font=("Segoe UI", 8, "bold"))
+
+            # Обозначение команды возврата станка в нули (End 0;0)
+            if getattr(p, 'return_to_zero', False):
+                z_sx, z_sy = self.to_screen(0, 0)
+                self.canvas.create_oval(z_sx - 6, z_sy - 6, z_sx + 6, z_sy + 6, fill="#00e5ff", outline="#ffffff", width=1.5)
+                self.canvas.create_text(z_sx + 36, z_sy - 12, text="⌂ End (0,0)", fill="#00e5ff", font=("Segoe UI", 8, "bold"))
 
         # 3. Разомкнутые технологические резы (обрезка листа)
         for cut in p.open_contours:
