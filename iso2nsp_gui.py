@@ -795,16 +795,18 @@ class Iso2NspApp(tk.Tk):
             return
         for p in target_plates:
             p.parts = sort_parts_from_bottom_left(p.parts)
+            p.show_snake_path = True
         self._update_master_groups_for_active_plate()
         self._refresh_parts_table()
         self.render()
         messagebox.showinfo(
             "Очередность обработки изменена",
             "Очередность обработки деталей переупорядочена змейкой от нижнего левого угла (от упоров):\n\n"
-            "• Резка начинается от упоров станка (X=0, Y=0);\n"
-            "• Первая полоса деталей обрабатывается слева направо в сторону +X;\n"
-            "• Далее обработка продвигается змейкой (слева направо / справа налево) к верхнему краю листа;\n"
-            "• Первая деталь отмечена маркером '▶ Старт #1' на чертеже."
+            "• Старт резки: нижний левый угол листа (деталь #1 ▶);\n"
+            "• 1-й ряд (нижний): слева направо (в сторону +X, вправо от упоров);\n"
+            "• 2-й ряд: подъем чуть выше и движение справа налево (в сторону -X);\n"
+            "• 3-й ряд: подъем выше и движение слева направо (змейка);\n"
+            "• Траектория со стрелками и порядковыми номерами наглядно отображена на чертеже."
         )
 
     def on_toggle_cutoff(self):
@@ -1294,7 +1296,44 @@ class Iso2NspApp(tk.Tk):
                     hole_outline = "#ea7600" if is_selected else "#4772b3"
                     self.canvas.create_polygon(h_screen, fill="#222222", outline=hole_outline, width=1.2)
 
-        # Маркер первой детали (точка станка / старт резки - Blender Orange)
+        # Траектория очередности резки деталей (змейка со стрелками и номерами)
+        if getattr(p, 'show_snake_path', False) and len(p.parts) > 1:
+            part_centers = []
+            for idx, part in enumerate(p.parts):
+                bx = part.bbox()
+                cx = (bx[0] + bx[2]) / 2.0
+                cy = (bx[1] + bx[3]) / 2.0
+                sx, sy = self.to_screen(cx, cy)
+                part_centers.append((sx, sy))
+                # Порядковый номер детали
+                if len(p.parts) <= 150:
+                    self.canvas.create_text(
+                        sx, sy + 10,
+                        text=f"#{idx+1}",
+                        fill="#00e5ff",
+                        font=("Segoe UI", 7, "bold")
+                    )
+
+            # Отрисовка направляющих стрелок змейки между деталями
+            for i in range(len(part_centers) - 1):
+                p1 = part_centers[i]
+                p2 = part_centers[i + 1]
+                self.canvas.create_line(
+                    p1[0], p1[1], p2[0], p2[1],
+                    fill="#00b0ff", width=1.5, dash=(4, 3),
+                    arrow=tk.LAST, arrowshape=(7, 9, 3)
+                )
+
+            # Маркер финиша (последняя деталь)
+            last_sx, last_sy = part_centers[-1]
+            self.canvas.create_text(
+                last_sx, last_sy - 12,
+                text=f"■ Финиш #{len(p.parts)}",
+                fill="#5cb85c",
+                font=("Segoe UI", 8, "bold")
+            )
+
+        # Маркер первой детали (точка старта резки - Blender Orange)
         if p.parts:
             first_pt = p.parts[0]
             fbx = first_pt.bbox()
@@ -1302,7 +1341,7 @@ class Iso2NspApp(tk.Tk):
             fcy = (fbx[1] + fbx[3]) / 2.0
             fsx, fsy = self.to_screen(fcx, fcy)
             self.canvas.create_text(
-                fsx, fsy,
+                fsx, fsy - 12,
                 text="▶ Старт #1",
                 fill=self.accent_color,
                 font=("Segoe UI", 9, "bold")

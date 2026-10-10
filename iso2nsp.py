@@ -518,64 +518,80 @@ def build_part_hierarchy(closed_contours):
     return parts
 
 
-def sort_parts_from_bottom_left(parts):
+def cluster_into_rows_band(parts):
     """
-    Сортировка очередности обработки деталей змейкой от нижнего левого угла (от упоров):
-    - Старт от нижнего левого угла (X=0, Y=0);
-    - Первый проход по нижней полосе деталей идет слева направо (в сторону +X);
-    - Следующая полоса идет справа налево (в сторону -X);
-    - Далее траектория поднимается вверх змейкой (boustrophedon / serpentine),
-      минимизируя холостые перемещения (G00) лазерной головки.
+    Группировка деталей раскроя в сплошные горизонтальные полосы (ряды) по высоте.
+    Каждая полоса охватывает группу деталей, пересекающихся по вертикали (Y),
+    обеспечивая непрерывные ряды от левого края до правого.
     """
     if not parts:
         return []
 
-    part_data = []
+    items = []
     for p in parts:
         bx = p.bbox()
-        cx = (bx[0] + bx[2]) / 2.0
-        cy = (bx[1] + bx[3]) / 2.0
-        part_data.append({
+        items.append({
             'part': p,
-            'bbox': bx,
-            'cx': cx,
-            'cy': cy,
+            'bx': bx,
+            'cx': (bx[0] + bx[2]) / 2.0,
+            'cy': (bx[1] + bx[3]) / 2.0,
             'ymin': bx[1],
             'ymax': bx[3],
-            'h': max(1.0, bx[3] - bx[1])
+            'h': max(1.0, bx[3] - bx[1]),
+            'w': max(1.0, bx[2] - bx[0])
         })
 
-    # Сортировка изначально по нижнему краю ymin, затем по cx
-    part_data.sort(key=lambda item: (item['ymin'], item['cx']))
+    # Сортировка изначально снизу вверх по ymin, затем по cx
+    items.sort(key=lambda x: (x['ymin'], x['cx']))
 
-    # Группировка деталей в горизонтальные ряды по высоте
     rows = []
-    for item in part_data:
-        placed = False
+    for item in items:
+        best_row = None
+        best_overlap = 0.0
+
         for r in rows:
-            avg_cy = sum(x['cy'] for x in r) / len(r)
-            avg_h = sum(x['h'] for x in r) / len(r)
-            if abs(item['cy'] - avg_cy) < max(0.5 * avg_h, 0.4 * item['h']):
-                r.append(item)
-                placed = True
-                break
-        if not placed:
+            r_ymin = min(x['ymin'] for x in r)
+            r_ymax = max(x['ymax'] for x in r)
+            overlap = min(item['ymax'], r_ymax) - max(item['ymin'], r_ymin)
+            overlap_ratio = overlap / item['h']
+            if overlap_ratio > 0.35 and overlap > best_overlap:
+                best_overlap = overlap
+                best_row = r
+
+        if best_row is not None:
+            best_row.append(item)
+        else:
             rows.append([item])
 
-    # Сортировка рядов снизу вверх (от упоров Y=0 вверх к противоположному краю)
+    # Сортировка полос снизу вверх (от упоров Y=0 вверх по листу)
     rows.sort(key=lambda r: sum(x['cy'] for x in r) / len(r))
+    return rows
 
-    # Сортировка змейкой:
-    # Ряд 0 (нижний): слева направо (X возрастает)
-    # Ряд 1: справа налево (X убывает)
-    # Ряд 2: слева направо ...
+
+def sort_parts_from_bottom_left(parts):
+    """
+    Сортировка очередности обработки деталей змейкой от нижнего левого угла (от упоров):
+    - Старт строго от нижнего левого угла (минимальный Y, минимальный X);
+    - Первый ряд деталей режется слева направо (в сторону +X, вправо от упоров);
+    - Второй ряд поднимается чуть выше и режется справа налево (в сторону -X);
+    - Третий ряд — снова слева направо, и так далее змейкой (serpentine / boustrophedon) вверх листа;
+    - Полностью исключаются холостые переезды лазерной головки (G00) через весь стол.
+    """
+    if not parts:
+        return []
+
+    rows = cluster_into_rows_band(parts)
     sorted_parts = []
+
     for row_idx, r in enumerate(rows):
         reverse = (row_idx % 2 == 1)
         if reverse:
-            r.sort(key=lambda x: (-x['cx'], x['cy']))
+            # Справа налево: убывание cx, затем возрастание cy
+            r.sort(key=lambda item: (-item['cx'], item['cy']))
         else:
-            r.sort(key=lambda x: (x['cx'], x['cy']))
+            # Слева направо: возрастание cx, затем возрастание cy
+            r.sort(key=lambda item: (item['cx'], item['cy']))
+
         for item in r:
             sorted_parts.append(item['part'])
 
@@ -958,7 +974,8 @@ def convert_iso_to_nsp(input_paths, output_path: str,
                        flip_x=False, flip_y=False,
                        sheet_size=None, thickness=None, material=None,
                        repeats=None, pdf_output=None,
-                       include_cutoff=False, return_to_zero=False, lantek_pdfs=None):
+                       include_cutoff=False, return_to_zero=False, lantek_pdfs=None,
+                       sort_snake=False):
     """
     Пайплайн конвертации одного или нескольких ISO/CNC файлов в проект CypNest .nsp
     """
@@ -1022,6 +1039,9 @@ def convert_iso_to_nsp(input_paths, output_path: str,
         plate.flip_x = flip_x
         plate.flip_y = do_flip_y
         plate.apply_transformations()
+
+        if sort_snake:
+            plate.parts = sort_parts_from_bottom_left(plate.parts)
 
         project.add_plate(plate)
 
@@ -1094,6 +1114,7 @@ def main():
     arg_parser.add_argument("--pdf", nargs="?", const="auto", help="Сформировать производственный PDF-отчет (стиль Lantek CAM)")
     arg_parser.add_argument("--include-cutoff", action="store_true", help="Включить перенос линий обрезки листа в NSP (по умолчанию: отключено)")
     arg_parser.add_argument("--end-zero", action="store_true", help="Команда возврата станка к нулевым координатам (0, 0) после завершения листа")
+    arg_parser.add_argument("--snake", "--sort-snake", action="store_true", help="Оптимизировать очередность обработки деталей змейкой от упоров вправо")
     arg_parser.add_argument("--lantek-pdf", nargs="*", help="Файлы отчетов Lantek PDF для автоматического назначения имен и тиражей")
 
     args = arg_parser.parse_args()
@@ -1129,7 +1150,8 @@ def main():
         pdf_output=pdf_out,
         include_cutoff=args.include_cutoff,
         return_to_zero=args.end_zero,
-        lantek_pdfs=args.lantek_pdf
+        lantek_pdfs=args.lantek_pdf,
+        sort_snake=args.snake
     )
 
 
