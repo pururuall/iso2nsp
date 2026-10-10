@@ -21,7 +21,7 @@ from iso2nsp import (
     PlateData, NestingProject, parts_match_rotation, sort_parts_from_bottom_left
 )
 
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.6.0"
 IS_TEST_VERSION = "test" in APP_VERSION.lower()
 
 EMBEDDED_LICENSE_TEXT = """УСЛОВИЯ ИСПОЛЬЗОВАНИЯ И ОТКАЗ ОТ ОТВЕТСТВЕННОСТИ (LICENSE)
@@ -325,14 +325,6 @@ class Iso2NspApp(tk.Tk):
         # Быстрое переключение технологической обрезки листа
         self.btn_toggle_cutoff = ttk.Button(left_sidebar, text="✂ Обрезка: отсутствует", command=self.on_toggle_cutoff)
         self.btn_toggle_cutoff.pack(fill=tk.X, pady=(3, 2))
-
-        # Переключение команды возврата станка к нулевым координатам (End 0;0)
-        self.btn_toggle_end_zero = ttk.Button(
-            left_sidebar,
-            text="⌂ End 0;0: ВЫКЛ (возврат в ноль)",
-            command=self.on_toggle_end_zero
-        )
-        self.btn_toggle_end_zero.pack(fill=tk.X, pady=(2, 2))
 
         ttk.Separator(left_sidebar, orient="horizontal").pack(fill=tk.X, pady=6)
 
