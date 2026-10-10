@@ -311,28 +311,16 @@ class Iso2NspApp(tk.Tk):
         chk_all = ttk.Checkbutton(trans_head, text="Ко всем листам", variable=self.var_apply_all, style="TCheckbutton")
         chk_all.pack(side=tk.RIGHT)
 
-        ttk.Button(left_sidebar, text="⤢ Поменять оси (X ↔ Y)", command=self.on_toggle_swap_axes).pack(fill=tk.X, pady=2)
-
         rot_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
         rot_frame.pack(fill=tk.X, pady=2)
         ttk.Button(rot_frame, text="⟲ -90°", width=7, command=lambda: self.on_rotate(-90)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
         ttk.Button(rot_frame, text="⟳ +90°", width=7, command=lambda: self.on_rotate(90)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
         ttk.Button(rot_frame, text="180°", width=7, command=lambda: self.on_rotate(180)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
 
-        flip_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
-        flip_frame.pack(fill=tk.X, pady=2)
-        ttk.Button(flip_frame, text="⇄ Отразить X", width=12, command=self.on_flip_x).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
-        ttk.Button(flip_frame, text="⇅ Отразить Y", width=12, command=self.on_flip_y).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
-
-        align_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
-        align_frame.pack(fill=tk.X, pady=2)
-        ttk.Button(align_frame, text="⇲ В нули (0, 0)", width=12, command=self.on_align_zero).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
-        ttk.Button(align_frame, text="⌖ Отступ 10мм", width=12, command=lambda: self.on_align_margin(10.0)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
-
-        align_frame2 = tk.Frame(left_sidebar, bg=self.panel_bg)
-        align_frame2.pack(fill=tk.X, pady=2)
-        ttk.Button(align_frame2, text="⊡ Центрировать", width=12, command=self.on_center_sheet).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
-        ttk.Button(align_frame2, text="⚡ Резка от упоров", width=12, command=self.on_sort_bottom_left).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+        action_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
+        action_frame.pack(fill=tk.X, pady=2)
+        ttk.Button(action_frame, text="⇲ В нули (0, 0)", width=12, command=self.on_align_zero).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+        ttk.Button(action_frame, text="⚡ Резка от упоров", width=12, command=self.on_sort_bottom_left).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
 
         # Быстрое переключение технологической обрезки листа
         self.btn_toggle_cutoff = ttk.Button(left_sidebar, text="✂ Обрезка: отсутствует", command=self.on_toggle_cutoff)
