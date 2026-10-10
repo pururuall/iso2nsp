@@ -21,7 +21,7 @@ from iso2nsp import (
     PlateData, NestingProject, parts_match_rotation, sort_parts_from_bottom_left
 )
 
-APP_VERSION = "2.4.1"
+APP_VERSION = "2.5.0"
 IS_TEST_VERSION = "test" in APP_VERSION.lower()
 
 EMBEDDED_LICENSE_TEXT = """УСЛОВИЯ ИСПОЛЬЗОВАНИЯ И ОТКАЗ ОТ ОТВЕТСТВЕННОСТИ (LICENSE)
