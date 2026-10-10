@@ -21,7 +21,7 @@ from iso2nsp import (
     PlateData, NestingProject, parts_match_rotation, sort_parts_from_bottom_left
 )
 
-APP_VERSION = "2.6.0"
+APP_VERSION = "3.0.0-test"
 IS_TEST_VERSION = "test" in APP_VERSION.lower()
 
 EMBEDDED_LICENSE_TEXT = """УСЛОВИЯ ИСПОЛЬЗОВАНИЯ И ОТКАЗ ОТ ОТВЕТСТВЕННОСТИ (LICENSE)
@@ -317,10 +317,8 @@ class Iso2NspApp(tk.Tk):
         ttk.Button(rot_frame, text="⟳ +90°", width=7, command=lambda: self.on_rotate(90)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
         ttk.Button(rot_frame, text="180°", width=7, command=lambda: self.on_rotate(180)).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
 
-        action_frame = tk.Frame(left_sidebar, bg=self.panel_bg)
-        action_frame.pack(fill=tk.X, pady=2)
-        ttk.Button(action_frame, text="⇲ В нули (0, 0)", width=12, command=self.on_align_zero).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
-        ttk.Button(action_frame, text="⚡ Резка от упоров", width=12, command=self.on_sort_bottom_left).pack(side=tk.LEFT, expand=True, fill=tk.X, padx=1)
+        ttk.Button(left_sidebar, text="⇲ В нули (0, 0)", command=self.on_align_zero).pack(fill=tk.X, pady=2)
+        ttk.Button(left_sidebar, text="⚡ Очередность обработки (змейка)", command=self.on_sort_bottom_left).pack(fill=tk.X, pady=2)
 
         # Быстрое переключение технологической обрезки листа
         self.btn_toggle_cutoff = ttk.Button(left_sidebar, text="✂ Обрезка: отсутствует", command=self.on_toggle_cutoff)
@@ -791,7 +789,7 @@ class Iso2NspApp(tk.Tk):
         self._update_ui_for_active_sheet()
 
     def on_sort_bottom_left(self):
-        """Переупорядочивание деталей раскроя от базовых упоров (0,0) - старт резки из нижнего левого угла (синяя стрелка)"""
+        """Переупорядочивание очередности обработки деталей змейкой от нижнего левого угла (от упоров) вправо"""
         target_plates = self._get_target_plates()
         if not target_plates:
             return
@@ -801,10 +799,11 @@ class Iso2NspApp(tk.Tk):
         self._refresh_parts_table()
         self.render()
         messagebox.showinfo(
-            "Порядок резки оптимизирован",
-            "Порядок резки деталей переупорядочен от нижнего левого угла (упоры X=0, Y=0):\n\n"
-            "• Станок начнет резку с ближайшей к упорам детали (синяя стрелка);\n"
-            "• Траектория оптимизирована снизу вверх без лишних холостых перемещений (G00);\n"
+            "Очередность обработки изменена",
+            "Очередность обработки деталей переупорядочена змейкой от нижнего левого угла (от упоров):\n\n"
+            "• Резка начинается от упоров станка (X=0, Y=0);\n"
+            "• Первая полоса деталей обрабатывается слева направо в сторону +X;\n"
+            "• Далее обработка продвигается змейкой (слева направо / справа налево) к верхнему краю листа;\n"
             "• Первая деталь отмечена маркером '▶ Старт #1' на чертеже."
         )
 

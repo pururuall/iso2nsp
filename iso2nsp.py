@@ -520,41 +520,68 @@ def build_part_hierarchy(closed_contours):
 
 def sort_parts_from_bottom_left(parts):
     """
-    Сортировка порядка деталей раскроя от базовых упоров станка (0, 0)
-    (нижний левый угол, 'синяя стрелка').
-    Продвижение снизу вверх с минимизацией холостых перемещений (G00).
+    Сортировка очередности обработки деталей змейкой от нижнего левого угла (от упоров):
+    - Старт от нижнего левого угла (X=0, Y=0);
+    - Первый проход по нижней полосе деталей идет слева направо (в сторону +X);
+    - Следующая полоса идет справа налево (в сторону -X);
+    - Далее траектория поднимается вверх змейкой (boustrophedon / serpentine),
+      минимизируя холостые перемещения (G00) лазерной головки.
     """
     if not parts:
         return []
 
-    centers = []
+    part_data = []
     for p in parts:
         bx = p.bbox()
-        centers.append(((bx[0] + bx[2]) / 2.0, (bx[1] + bx[3]) / 2.0))
+        cx = (bx[0] + bx[2]) / 2.0
+        cy = (bx[1] + bx[3]) / 2.0
+        part_data.append({
+            'part': p,
+            'bbox': bx,
+            'cx': cx,
+            'cy': cy,
+            'ymin': bx[1],
+            'ymax': bx[3],
+            'h': max(1.0, bx[3] - bx[1])
+        })
 
-    unvisited = list(range(len(parts)))
+    # Сортировка изначально по нижнему краю ymin, затем по cx
+    part_data.sort(key=lambda item: (item['ymin'], item['cx']))
+
+    # Группировка деталей в горизонтальные ряды по высоте
+    rows = []
+    for item in part_data:
+        placed = False
+        for r in rows:
+            avg_cy = sum(x['cy'] for x in r) / len(r)
+            avg_h = sum(x['h'] for x in r) / len(r)
+            if abs(item['cy'] - avg_cy) < max(0.5 * avg_h, 0.4 * item['h']):
+                r.append(item)
+                placed = True
+                break
+        if not placed:
+            rows.append([item])
+
+    # Сортировка рядов снизу вверх (от упоров Y=0 вверх к противоположному краю)
+    rows.sort(key=lambda r: sum(x['cy'] for x in r) / len(r))
+
+    # Сортировка змейкой:
+    # Ряд 0 (нижний): слева направо (X возрастает)
+    # Ряд 1: справа налево (X убывает)
+    # Ряд 2: слева направо ...
     sorted_parts = []
-    curr_x, curr_y = 0.0, 0.0
-
-    while unvisited:
-        best_idx = None
-        best_cost = float('inf')
-
-        for idx in unvisited:
-            cx, cy = centers[idx]
-            dist = math.hypot(cx - curr_x, cy - curr_y)
-            y_penalty = max(0.0, curr_y - cy) * 1.5
-            cost = dist + y_penalty
-
-            if cost < best_cost:
-                best_cost = cost
-                best_idx = idx
-
-        sorted_parts.append(parts[best_idx])
-        curr_x, curr_y = centers[best_idx]
-        unvisited.remove(best_idx)
+    for row_idx, r in enumerate(rows):
+        reverse = (row_idx % 2 == 1)
+        if reverse:
+            r.sort(key=lambda x: (-x['cx'], x['cy']))
+        else:
+            r.sort(key=lambda x: (x['cx'], x['cy']))
+        for item in r:
+            sorted_parts.append(item['part'])
 
     return sorted_parts
+
+sort_parts_snake = sort_parts_from_bottom_left
 
 
 # ==============================================================================
